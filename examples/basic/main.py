@@ -4,7 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import FastAuth, SQLAlchemyAdapter
@@ -21,6 +21,15 @@ class User(Base, FastAuthUserMixin):
     """App user table with FastAuth columns."""
 
     __tablename__ = "users"
+    role: Mapped[str] = mapped_column(
+        String(20), info={"fastauth_input": True, "fastauth_returned": True}
+    )
+    bio: Mapped[str | None] = mapped_column(
+        String, info={"fastauth_input": True, "fastauth_returned": False}
+    )
+    notes: Mapped[str | None] = mapped_column(
+        String, info={"fastauth_input": False, "fastauth_returned": False}
+    )  # both default False — invisible in and out
 
 
 class Session(Base, FastAuthSessionMixin):
