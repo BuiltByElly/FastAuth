@@ -9,3 +9,5 @@ wheels/
 # Virtual environments
 .venv
 notes.txt
+
+examples/basic/test.db
