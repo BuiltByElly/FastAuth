@@ -1,4 +1,15 @@
 # fastauth/models.py
+"""Column mixins for wiring FastAuth into your own SQLAlchemy models.
+
+These classes are **mixins, not models**: they only declare columns.
+You inherit from them alongside your own declarative `Base` to add the
+columns FastAuth needs, while keeping full ownership of table names,
+relationships, and any extra columns.
+
+Designed for SQLAlchemy 2.0 style (`Mapped` + `mapped_column`).
+SQLModel compatibility is not officially supported/tested.
+"""
+
 import uuid
 from datetime import datetime
 
@@ -7,13 +18,33 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 
 class FastAuthUserMixin:
-    """A Base class for the required columns for Users.
+    """Adds the required FastAuth columns to a user model.
 
-    Args:
-        id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
-        email: Mapped[str] = mapped_column(String, unique=True, index=True)
-        hashed_password: Mapped[str] = mapped_column(String)
-        is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    Inherit from this mixin (plus your declarative `Base`) in your own
+    `User` model. It does not define `__tablename__` — you do.
+
+    Attributes:
+        id: Primary key, auto-generated `uuid.uuid7` (time-ordered UUID).
+        email: Unique, indexed login identifier.
+        hashed_password: Argon2 (or other) password hash. Never store
+            plaintext here — FastAuth hashes on register/login.
+        is_active: Soft on/off switch for the account. FastAuth treats
+            `False` as "cannot log in", without deleting the row.
+
+    Example:
+    ```python
+    from sqlalchemy.orm import DeclarativeBase
+    from fastauth.models import FastAuthUserMixin
+
+    class Base(DeclarativeBase):
+        pass
+
+    class Users(Base, FastAuthUserMixin):
+        __tablename__ = "users"
+
+        # add your own columns as needed:
+        # name: Mapped[str] = mapped_column(String, nullable=True)
+    ```
     """
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
@@ -23,20 +54,39 @@ class FastAuthUserMixin:
 
 
 class FastAuthSessionMixin:
-    """A Base class for the required columns for Sessions.
+    """Adds the required FastAuth columns to a session model.
 
-    Args:
-        id: Mapped[str] = mapped_column(String, primary_key=True)
-        expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-        created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    Inherit from this mixin (plus your declarative `Base`) in your own
+    session model. It does not define `__tablename__` or `user_id` —
+    you must add `user_id` yourself so the foreign key can point at
+    whatever your users table is actually called.
 
-    Important:
-        create a foreign key in its child class
-        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id")).
-        replace "users" with the appropriate table name
+    Attributes:
+        id: Primary key, opaque session token (random string generated
+            by FastAuth).
+        expires_at: Timezone-aware expiry timestamp. Expired sessions
+            are rejected by FastAuth.
+        created_at: Timezone-aware creation timestamp.
+
+    Example:
+    ```python
+    import uuid
+    from sqlalchemy import ForeignKey
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+    from fastauth.models import FastAuthSessionMixin
+
+    class Base(DeclarativeBase):
+        pass
+
+    class Sessions(Base, FastAuthSessionMixin):
+        __tablename__ = "sessions"
+
+        # Required: link each session back to a user.
+        # Replace "users.id" with your actual user table name if different.
+        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    ```
     """
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    # user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
