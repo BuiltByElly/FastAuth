@@ -8,7 +8,9 @@ from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import (
+    CookieConfig,
     FastAuth,
+    FastAuthConfig,
     FastAuthRefreshTokenMixin,
     JWTConfig,
     SQLAlchemyJWTAdapter,
@@ -60,7 +62,10 @@ auth = FastAuth(
     adapter=SQLAlchemyJWTAdapter,
     user_model=User,
     refresh_model=RefreshToken,
-    jwt_config=JWTConfig(secret_key="gt0tl4mZRz/XQ7+i96tPYh1XHg8U7FiU62a9QJG3n6s="),
+    config=FastAuthConfig(
+        jwt=JWTConfig(secret_key="gt0tl4mZRz/XQ7+i96tPYh1XHg8U7FiU62a9QJG3n6s="),
+        cookies=CookieConfig(refresh_cookie_name="refreshing"),
+    ),
     db_session_dependency=get_db,
     strategy="jwt",
 )

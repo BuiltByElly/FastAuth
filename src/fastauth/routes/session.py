@@ -8,13 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.cookies import (
-    SESSION_COOKIE_NAME,
+    clear_cookie_kwargs,
     clear_session_cookie,
+    session_cookie_kwargs,
     set_session_cookie,
 )
 from fastauth.models import FastAuthUserMixin
 from fastauth.routes.context import AuthContext
-from fastauth.schemas import LoginRequest
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 
 
@@ -25,8 +25,11 @@ def register_session_routes(
 ) -> None:
     """Mount signup/login/logout/me using session rows vía the adapter."""
     SignupRequest = ctx.signup_schema
+    LoginRequest = ctx.login_schema
     UserResponse = ctx.user_response_schema
     DependsSession = Depends(ctx.db_session_dependency)
+    cookies = ctx.config.cookies
+    hasher = ctx.password_hasher
 
     @router.post("/signup", response_model=UserResponse)
     async def signup(
@@ -43,7 +46,7 @@ def register_session_routes(
 
     @router.post("/login")
     async def login(
-        payload: LoginRequest,
+        payload: LoginRequest,  # type: ignore[valid-type]
         response: Response,
         request: Request,
         db_session: Annotated[AsyncSession, DependsSession],
@@ -52,13 +55,13 @@ def register_session_routes(
         adapter = ctx.build_adapter(db_session)
         user = await adapter.get_user_by_email(payload.email)
         if user is None:
-            verify_password(payload.password, DUMMY_PASSWORD_HASH)
+            verify_password(payload.password, DUMMY_PASSWORD_HASH, hasher)
             raise HTTPException(status_code=401, detail="Invalid credentials.")
-        if not verify_password(payload.password, user.hashed_password):
+        if not verify_password(payload.password, user.hashed_password, hasher):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account is inactive.")
-        old_token = request.cookies.get(SESSION_COOKIE_NAME)
+        old_token = request.cookies.get(cookies.session_cookie_name)
         if old_token is not None:
             await adapter.revoke_credential(old_token)
         record: Any = await adapter.issue_credential(user)
@@ -67,7 +70,9 @@ def register_session_routes(
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=UTC)
         max_age = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
-        set_session_cookie(response, str(record.id), max_age=max_age)
+        set_session_cookie(
+            response, str(record.id), **session_cookie_kwargs(cookies, max_age=max_age)
+        )
         return {"success": True, "message": "Logged in successfully"}
 
     @router.post("/logout")
@@ -78,12 +83,14 @@ def register_session_routes(
         current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
     ):
         """Revoke the cookie (or bearer) session id and clear the cookie."""
-        token = request.cookies.get(SESSION_COOKIE_NAME)
+        token = request.cookies.get(cookies.session_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing session.")
         await ctx.build_adapter(db_session).revoke_credential(token)
         await db_session.commit()
-        clear_session_cookie(response)
+        clear_session_cookie(
+            response, name=cookies.session_cookie_name, **clear_cookie_kwargs(cookies)
+        )
         return {"success": True, "message": "logged out"}
 
     @router.get("/me", response_model=UserResponse)

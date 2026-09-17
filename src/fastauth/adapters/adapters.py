@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, TypeVar
 
+from pwdlib import PasswordHash
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.config import JWTConfig
@@ -30,6 +31,8 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
         session_model: type[SessionT] | None = None,
         jwt_config: JWTConfig | None = None,
         refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
+        session_expire_days: int = 7,
+        password_hasher: PasswordHash | None = None,
     ):
         """Store the request-scoped session plus app models (no commit here)."""
         self.db_session = db_session
@@ -37,6 +40,8 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
         self.session_model: type[SessionT] | None = session_model
         self.jwt_config = jwt_config
         self.refresh_model = refresh_model
+        self.session_expire_days = session_expire_days
+        self.password_hasher = password_hasher
 
     @classmethod
     @abstractmethod

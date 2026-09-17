@@ -14,6 +14,8 @@ from typing import Literal
 
 from fastapi import Response
 
+from fastauth.config import CookieConfig
+
 SESSION_COOKIE_NAME = "fastauth_session"
 REFRESH_COOKIE_NAME = "fastauth_refresh"
 
@@ -34,21 +36,24 @@ def set_session_cookie(
     response: Response,
     session_id: str,
     *,
+    name: str = SESSION_COOKIE_NAME,
     max_age: int = SESSION_COOKIE_MAX_AGE,
     secure: bool = True,
     samesite: SameSite = "lax",
     path: str = "/",
+    domain: str | None = None,
 ) -> None:
     """Store the session id in an HttpOnly cookie (session strategy)."""
     _check_samesite(samesite, secure)
     response.set_cookie(
-        SESSION_COOKIE_NAME,
+        name,
         session_id,
         max_age=max_age,
         httponly=True,
         secure=secure,
         samesite=samesite,
         path=path,
+        domain=domain,
     )
 
 
@@ -56,35 +61,41 @@ def set_refresh_cookie(
     response: Response,
     refresh_token: str,
     *,
+    name: str = REFRESH_COOKIE_NAME,
     max_age: int = REFRESH_COOKIE_MAX_AGE,
     secure: bool = True,
     samesite: SameSite = "lax",
     path: str = "/",
+    domain: str | None = None,
 ) -> None:
     """Store the refresh token in an HttpOnly cookie (JWT strategy)."""
     _check_samesite(samesite, secure)
     response.set_cookie(
-        REFRESH_COOKIE_NAME,
+        name,
         refresh_token,
         max_age=max_age,
         httponly=True,
         secure=secure,
         samesite=samesite,
         path=path,
+        domain=domain,
     )
 
 
 def clear_session_cookie(
     response: Response,
     *,
+    name: str = SESSION_COOKIE_NAME,
     secure: bool = True,
     samesite: SameSite = "lax",
     path: str = "/",
+    domain: str | None = None,
 ) -> None:
-    """Delete the session cookie. Path/flags must match the setter."""
+    """Delete the session cookie. Name/path/flags must match the setter."""
     response.delete_cookie(
-        SESSION_COOKIE_NAME,
+        name,
         path=path,
+        domain=domain,
         secure=secure,
         httponly=True,
         samesite=samesite,
@@ -94,15 +105,52 @@ def clear_session_cookie(
 def clear_refresh_cookie(
     response: Response,
     *,
+    name: str = REFRESH_COOKIE_NAME,
     secure: bool = True,
     samesite: SameSite = "lax",
     path: str = "/",
+    domain: str | None = None,
 ) -> None:
-    """Delete the refresh cookie. Path/flags must match the setter."""
+    """Delete the refresh cookie. Name/path/flags must match the setter."""
     response.delete_cookie(
-        REFRESH_COOKIE_NAME,
+        name,
         path=path,
+        domain=domain,
         secure=secure,
         httponly=True,
         samesite=samesite,
     )
+
+
+def session_cookie_kwargs(cfg: CookieConfig, *, max_age: int) -> dict:
+    """Expand a CookieConfig into set_session_cookie kwargs (name/flags)."""
+    return {
+        "name": cfg.session_cookie_name,
+        "max_age": max_age,
+        "secure": cfg.secure,
+        "samesite": cfg.samesite,
+        "path": cfg.path,
+        "domain": cfg.domain,
+    }
+
+
+def refresh_cookie_kwargs(cfg: CookieConfig, *, max_age: int) -> dict:
+    """Expand a CookieConfig into set_refresh_cookie kwargs (name/flags)."""
+    return {
+        "name": cfg.refresh_cookie_name,
+        "max_age": max_age,
+        "secure": cfg.secure,
+        "samesite": cfg.samesite,
+        "path": cfg.path,
+        "domain": cfg.domain,
+    }
+
+
+def clear_cookie_kwargs(cfg: CookieConfig) -> dict:
+    """Expand a CookieConfig into clear_* kwargs (must match the setter)."""
+    return {
+        "secure": cfg.secure,
+        "samesite": cfg.samesite,
+        "path": cfg.path,
+        "domain": cfg.domain,
+    }

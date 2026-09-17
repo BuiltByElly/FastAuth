@@ -5,11 +5,14 @@ from .adapters.sqlalchemy import (
     SQLAlchemyJWTAdapter,
     SQLAlchemySessionAdapter,
 )
-from .config import JWTConfig
-from .core import FastAuth
-from .dependencies import (
-    current_refresh_token,
+from .config import (
+    CookieConfig,
+    FastAuthConfig,
+    JWTConfig,
+    PasswordConfig,
+    SessionConfig,
 )
+from .core import FastAuth
 from .models import (
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
@@ -18,12 +21,15 @@ from .models import (
 
 __all__ = [
     "Adapter",
+    "CookieConfig",
     "FastAuth",
+    "FastAuthConfig",
     "FastAuthRefreshTokenMixin",
     "FastAuthSessionMixin",
     "FastAuthUserMixin",
     "JWTConfig",
+    "PasswordConfig",
     "SQLAlchemyJWTAdapter",
     "SQLAlchemySessionAdapter",
-    "current_refresh_token",
+    "SessionConfig",
 ]

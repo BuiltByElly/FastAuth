@@ -24,4 +24,5 @@ build-backend = "uv_build"
 dev = [
     "aiosqlite>=0.22.1",
     "fastapi[standard]>=0.141.1",
+    "pwdlib[bcrypt]>=0.3.1",
 ]

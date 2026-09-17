@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field, create_model
 
+from fastauth.config import PasswordConfig
+
 
 class SignupBase(BaseModel):
     """Core fields every signup requires, regardless of dev extras."""
@@ -42,9 +44,40 @@ class SessionResponse(BaseModel):
     expires_at: str
 
 
-def build_signup_schema(extra_fields: dict[str, Any]) -> type[BaseModel]:
+def _password_field(password_config: PasswordConfig | None = None) -> Any:
+    """Password field honoring the configured policy (defaults 8..128)."""
+    pc = password_config or PasswordConfig()
+    return Field(min_length=pc.min_length, max_length=pc.max_length)
+
+
+def build_signup_schema(
+    extra_fields: dict[str, Any],
+    password_config: PasswordConfig | None = None,
+) -> type[BaseModel]:
     """Combine SignupBase with dev columns tagged fastauth_input=True."""
-    return create_model("SignupRequest", __base__=SignupBase, **extra_fields)  # type: ignore[call-overload]
+    if password_config is None:
+        return create_model("SignupRequest", __base__=SignupBase, **extra_fields)  # type: ignore[call-overload]
+    dyn_base = create_model(
+        "SignupBase",
+        __base__=BaseModel,
+        email=(EmailStr, ...),
+        password=(str, _password_field(password_config)),
+    )
+    return create_model("SignupRequest", __base__=dyn_base, **extra_fields)  # type: ignore[call-overload]
+
+
+def build_login_schema(
+    password_config: PasswordConfig | None = None,
+) -> type[BaseModel]:
+    """Login schema honoring the configured password policy."""
+    if password_config is None:
+        return LoginRequest
+    return create_model(
+        "LoginRequest",
+        __base__=BaseModel,
+        email=(EmailStr, ...),
+        password=(str, _password_field(password_config)),
+    )
 
 
 def build_user_response_schema(extra_fields: dict[str, Any]) -> type[BaseModel]:

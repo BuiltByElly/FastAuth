@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
+from pwdlib import PasswordHash
 from sqlalchemy import delete, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +13,6 @@ from fastauth.adapters.adapters import Adapter, SessionT, UserT
 from fastauth.config import JWTConfig
 from fastauth.models import FastAuthRefreshTokenMixin
 from fastauth.security import hash_password
-
-SESSION_EXPIRE_DAYS = 7
 
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
@@ -39,10 +38,18 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
         session_model: type[SessionT],
         jwt_config: JWTConfig | None = None,
         refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
+        session_expire_days: int = 7,
+        password_hasher: PasswordHash | None = None,
     ):
         """Bind a request session plus the app's User/Session models."""
         super().__init__(
-            db_session, user_model, session_model, jwt_config, refresh_model
+            db_session,
+            user_model,
+            session_model,
+            jwt_config,
+            refresh_model,
+            session_expire_days,
+            password_hasher,
         )
 
     @classmethod
@@ -72,7 +79,7 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
         password = data.pop("password")
         user = self.user_model(
             email=data.pop("email"),  # type: ignore[call-arg]
-            hashed_password=hash_password(password),  # type: ignore[call-arg]
+            hashed_password=hash_password(password, self.password_hasher),  # type: ignore[call-arg]
             **data,
         )
         self.db_session.add(user)
@@ -80,12 +87,12 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
         return user
 
     async def issue_credential(self, user: UserT) -> SessionT:
-        """Create a session row valid for SESSION_EXPIRE_DAYS."""
+        """Create a session row valid for `session_expire_days`."""
         now = datetime.now(UTC)
         session = self.session_model(  # type: ignore[call-arg]
             user_id=user.id,  # type: ignore[call-arg]
             created_at=now,  # type: ignore[call-arg]
-            expires_at=now + timedelta(days=SESSION_EXPIRE_DAYS),  # type: ignore[call-arg]
+            expires_at=now + timedelta(days=self.session_expire_days),  # type: ignore[call-arg]
         )
         self.db_session.add(session)
         await self.db_session.flush()
@@ -140,10 +147,18 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         session_model: type[SessionT] | None = None,
         jwt_config: JWTConfig | None = None,
         refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
+        session_expire_days: int = 7,
+        password_hasher: PasswordHash | None = None,
     ):
         """Bind a request session plus the app's User model (no sessions)."""
         super().__init__(
-            db_session, user_model, session_model, jwt_config, refresh_model
+            db_session,
+            user_model,
+            session_model,
+            jwt_config,
+            refresh_model,
+            session_expire_days,
+            password_hasher,
         )
 
     @classmethod
@@ -173,7 +188,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         password = data.pop("password")
         user = self.user_model(
             email=data.pop("email"),  # type: ignore[call-arg]
-            hashed_password=hash_password(password),  # type: ignore[call-arg]
+            hashed_password=hash_password(password, self.password_hasher),  # type: ignore[call-arg]
             **data,
         )
         self.db_session.add(user)

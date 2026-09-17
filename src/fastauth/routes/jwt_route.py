@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.cookies import (
-    REFRESH_COOKIE_NAME,
+    clear_cookie_kwargs,
     clear_refresh_cookie,
+    refresh_cookie_kwargs,
     set_refresh_cookie,
 )
 from fastauth.models import FastAuthUserMixin
 from fastauth.routes.context import AuthContext
-from fastauth.schemas import LoginRequest, TokenResponse
+from fastauth.schemas import TokenResponse
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 
 
@@ -29,8 +30,11 @@ def register_jwt_routes(
     whole refresh family).
     """
     SignupRequest = ctx.signup_schema
+    LoginRequest = ctx.login_schema
     UserResponse = ctx.user_response_schema
     DependsSession = Depends(ctx.db_session_dependency)
+    cookies = ctx.config.cookies
+    hasher = ctx.password_hasher
 
     @router.post("/signup", response_model=UserResponse)
     async def signup(
@@ -47,7 +51,7 @@ def register_jwt_routes(
 
     @router.post("/login", response_model=TokenResponse)
     async def login(
-        payload: LoginRequest,
+        payload: LoginRequest,  # type: ignore[valid-type]
         response: Response,
         session: Annotated[AsyncSession, DependsSession],
     ):
@@ -55,9 +59,9 @@ def register_jwt_routes(
         adapter = ctx.build_adapter(session)
         user = await adapter.get_user_by_email(payload.email)
         if user is None:
-            verify_password(payload.password, DUMMY_PASSWORD_HASH)
+            verify_password(payload.password, DUMMY_PASSWORD_HASH, hasher)
             raise HTTPException(status_code=401, detail="Invalid credentials.")
-        if not verify_password(payload.password, user.hashed_password):
+        if not verify_password(payload.password, user.hashed_password, hasher):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account is inactive.")
@@ -67,7 +71,10 @@ def register_jwt_routes(
         set_refresh_cookie(
             response,
             refresh_token,
-            max_age=ctx.jwt_config.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
+            **refresh_cookie_kwargs(
+                cookies,
+                max_age=ctx.config.jwt.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
+            ),
         )
         return TokenResponse(access_token=access_token)
 
@@ -82,7 +89,7 @@ def register_jwt_routes(
         Reusing an already-rotated token revokes the whole refresh
         family (theft defense) — the user must log in again.
         """
-        token = request.cookies.get(REFRESH_COOKIE_NAME)
+        token = request.cookies.get(cookies.refresh_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing refresh token.")
         adapter = ctx.build_adapter(session)
@@ -100,7 +107,10 @@ def register_jwt_routes(
         set_refresh_cookie(
             response,
             refresh_token,
-            max_age=ctx.jwt_config.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
+            **refresh_cookie_kwargs(
+                cookies,
+                max_age=ctx.config.jwt.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
+            ),
         )
         return TokenResponse(access_token=access_token)
 
@@ -111,13 +121,15 @@ def register_jwt_routes(
         session: Annotated[AsyncSession, DependsSession],
     ):
         """Revoke the refresh cookie's token and clear the cookie."""
-        token = request.cookies.get(REFRESH_COOKIE_NAME)
+        token = request.cookies.get(cookies.refresh_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing refresh token.")
         adapter = ctx.build_adapter(session)
         await adapter.revoke_refresh_token(token)
         await session.commit()
-        clear_refresh_cookie(response)
+        clear_refresh_cookie(
+            response, name=cookies.refresh_cookie_name, **clear_cookie_kwargs(cookies)
+        )
         return {"message": "logged out"}
 
     @router.get("/me", response_model=UserResponse)

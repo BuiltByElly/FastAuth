@@ -4,11 +4,12 @@ from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from pwdlib import PasswordHash
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
-from fastauth.config import JWTConfig
+from fastauth.config import FastAuthConfig
 from fastauth.models import (
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
@@ -25,9 +26,11 @@ class AuthContext:
     session_model: type[FastAuthSessionMixin] | None
     db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]]
     signup_schema: type[BaseModel]
+    login_schema: type[BaseModel]
     user_response_schema: type[BaseModel]
     strategy: Literal["session", "jwt"]
-    jwt_config: JWTConfig | None = None
+    config: FastAuthConfig
+    password_hasher: PasswordHash | None = None
     refresh_model: type[FastAuthRefreshTokenMixin] | None = None
 
     def build_adapter(self, session: AsyncSession) -> Adapter:
@@ -36,6 +39,8 @@ class AuthContext:
             db_session=session,
             user_model=self.user_model,
             session_model=self.session_model,  # type: ignore[arg-type]
-            jwt_config=self.jwt_config,
+            jwt_config=self.config.jwt,
             refresh_model=self.refresh_model,
+            session_expire_days=self.config.session.expire_days,
+            password_hasher=self.password_hasher,
         )

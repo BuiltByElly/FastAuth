@@ -8,7 +8,6 @@ from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
-from fastauth.config import JWTConfig
 from fastauth.dependencies import jwt_current_user, session_current_user
 from fastauth.models import (
     FastAuthRefreshTokenMixin,
@@ -18,7 +17,14 @@ from fastauth.models import (
 from fastauth.routes.context import AuthContext
 from fastauth.routes.jwt_route import register_jwt_routes
 from fastauth.routes.session import register_session_routes
-from fastauth.schemas import build_signup_schema, build_user_response_schema
+from fastauth.schemas import (
+    build_login_schema,
+    build_signup_schema,
+    build_user_response_schema,
+)
+from fastauth.security import build_hasher
+
+from .config import FastAuthConfig
 
 
 class FastAuth:
@@ -42,7 +48,7 @@ class FastAuth:
         tags: list[str | Enum] | None = None,
         strategy: Literal["session", "jwt"] = "session",
         prefix: str = "/auth",
-        jwt_config: JWTConfig | None = None,
+        config: FastAuthConfig | None = None,
     ):
         """Bind models + session provider; build schemas, router, routes.
 
@@ -54,25 +60,38 @@ class FastAuth:
             tags: Optional list of tags for the router.
             strategy: Which route module to mount.
             prefix: Router prefix.
-            jwt_config: Required when strategy="jwt". Validated settings the
-                JWT adapter signs and validates tokens with.
+            config: Single config object (lifetimes, cookies, password
+                policy, JWT). Defaults to `FastAuthConfig()` — secure and
+                working out of the box. JWT strategy requires `config.jwt`;
+                JWT strategy also requires a refresh_model.
             refresh_model: App's refresh-token model (required for JWT;
                 enables single-use rotation + reuse detection).
         """
         if strategy == "session" and session_model is None:
             msg = "Session strategy requires a session_model."
             raise ValueError(msg)
-        if strategy == "jwt" and jwt_config is None:
-            msg = "JWT strategy requires a jwt_config."
+
+        cfg = config or FastAuthConfig()
+
+        if strategy == "jwt" and cfg.jwt is None:
+            msg = "JWT strategy requires config.jwt (pass FastAuthConfig with jwt=JWTConfig(...))."
             raise ValueError(msg)
+
         if strategy == "jwt" and refresh_model is None:
             msg = "JWT strategy requires a refresh_model."
             raise ValueError(msg)
-        self.strategy = strategy
-        self.jwt_config = jwt_config
-        self.refresh_model = refresh_model
 
-        self.signup_schema = build_signup_schema(adapter.get_extra_fields(user_model))
+        self.strategy = strategy
+        self.config = cfg
+        self.jwt_config = cfg.jwt
+        self.refresh_model = refresh_model
+        self.password_hasher = build_hasher(cfg.password.hash_schemes)
+
+        self.signup_schema = build_signup_schema(
+            adapter.get_extra_fields(user_model),
+            password_config=cfg.password,
+        )
+        self.login_schema = build_login_schema(password_config=cfg.password)
         self.user_response_schema = build_user_response_schema(
             adapter.get_response_fields(user_model)
         )
@@ -83,9 +102,11 @@ class FastAuth:
             session_model=session_model,
             db_session_dependency=db_session_dependency,
             signup_schema=self.signup_schema,
+            login_schema=self.login_schema,
             user_response_schema=self.user_response_schema,
             strategy=strategy,
-            jwt_config=jwt_config,
+            config=cfg,
+            password_hasher=self.password_hasher,
             refresh_model=refresh_model,
         )
         if strategy == "session":

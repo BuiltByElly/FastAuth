@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastauth.cookies import REFRESH_COOKIE_NAME, SESSION_COOKIE_NAME
+# from fastauth.cookies import REFRESH_COOKIE_NAME
 from fastauth.models import FastAuthUserMixin
 from fastauth.routes.context import AuthContext
 
@@ -29,7 +29,7 @@ def session_current_user(
         request: Request,
         session: Annotated[AsyncSession, Depends(ctx.db_session_dependency)],
     ) -> FastAuthUserMixin:
-        token = request.cookies.get(SESSION_COOKIE_NAME)
+        token = request.cookies.get(ctx.config.cookies.session_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing session cookie.")
         user = await ctx.build_adapter(session).resolve_credential(token)
@@ -65,8 +65,3 @@ def jwt_current_user(ctx: AuthContext) -> Callable[..., Awaitable[FastAuthUserMi
         return user
 
     return _dependency
-
-
-def current_refresh_token(request: Request) -> str | None:
-    """Read the refresh-token cookie (JWT strategy), or None if missing."""
-    return request.cookies.get(REFRESH_COOKIE_NAME)

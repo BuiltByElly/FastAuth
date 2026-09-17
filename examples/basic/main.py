@@ -7,7 +7,13 @@ from fastapi import FastAPI
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from fastauth import FastAuth, SQLAlchemySessionAdapter
+from fastauth import (
+    CookieConfig,
+    FastAuth,
+    FastAuthConfig,
+    PasswordConfig,
+    SQLAlchemySessionAdapter,
+)
 from fastauth.models import FastAuthSessionMixin, FastAuthUserMixin
 
 from .database import engine, get_db
@@ -55,6 +61,12 @@ auth = FastAuth(
     adapter=SQLAlchemySessionAdapter,
     user_model=User,
     session_model=Session,
+    config=FastAuthConfig(
+        cookies=CookieConfig(session_cookie_name="sessioning"),
+        password=PasswordConfig(
+            hash_schemes=["bcrypt"],
+        ),
+    ),
     db_session_dependency=get_db,
     strategy="session",
 )
