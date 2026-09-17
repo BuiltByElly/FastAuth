@@ -11,5 +11,17 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    """Check a plaintext password against its hash."""
-    return _hasher.verify(password, hashed)
+    """Check a plaintext password against its hash. Fail closed on bad hashes."""
+    try:
+        return bool(_hasher.verify(password, hashed))
+    except Exception:
+        return False
+
+
+DUMMY_PASSWORD_HASH: str = hash_password("fastauth-dummy-password-for-timing-mitigation")
+"""Pre-computed hash so login burns ~equal time on unknown emails.
+
+Call ``verify_password(password, DUMMY_PASSWORD_HASH)`` before rejecting an
+unknown user, narrowing the timing gap between "no such user" and
+"wrong password" responses.
+"""

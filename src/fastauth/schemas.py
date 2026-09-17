@@ -3,33 +3,33 @@
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, EmailStr, Field, create_model
 
 
 class SignupBase(BaseModel):
     """Core fields every signup requires, regardless of dev extras."""
 
-    email: str
-    password: str
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
     """Static: login never takes extra fields."""
 
-    email: str
-    password: str
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
 
 
 class UserResponseBase(BaseModel):
     """Core fields every user response returns, regardless of dev extras."""
 
     id: uuid.UUID
-    email: str
+    email: EmailStr
     is_active: bool
 
 
 class TokenResponse(BaseModel):
-    """JWT login/refresh response (placeholder scheme until real signing)."""
+    """JWT login/refresh response: signed access token."""
 
     access_token: str
     token_type: str = "bearer"

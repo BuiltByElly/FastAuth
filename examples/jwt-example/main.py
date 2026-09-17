@@ -7,7 +7,12 @@ from fastapi import FastAPI
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from fastauth import FastAuth, SQLAlchemySessionAdapter
+from fastauth import (
+    FastAuth,
+    FastAuthRefreshTokenMixin,
+    JWTConfig,
+    SQLAlchemyJWTAdapter,
+)
 from fastauth.models import FastAuthSessionMixin, FastAuthUserMixin
 
 from .database import engine, get_db
@@ -32,10 +37,10 @@ class User(Base, FastAuthUserMixin):
     )  # both default False — invisible in and out
 
 
-class Session(Base, FastAuthSessionMixin):
-    """App session table linked to User."""
+class RefreshToken(Base, FastAuthRefreshTokenMixin):
+    """App refresh token table linked to User."""
 
-    __tablename__ = "sessions"
+    __tablename__ = "refresh_tokens"
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
@@ -52,11 +57,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 auth = FastAuth(
-    adapter=SQLAlchemySessionAdapter,
+    adapter=SQLAlchemyJWTAdapter,
     user_model=User,
-    session_model=Session,
+    refresh_model=RefreshToken,
+    jwt_config=JWTConfig(secret_key="gt0tl4mZRz/XQ7+i96tPYh1XHg8U7FiU62a9QJG3n6s="),
     db_session_dependency=get_db,
-    strategy="session",
+    strategy="jwt",
 )
 
 app.include_router(auth.router)

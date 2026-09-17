@@ -13,6 +13,7 @@ SQLModel compatibility is not officially supported/tested.
 import uuid
 from datetime import datetime
 
+from pydantic import EmailStr
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,7 +49,7 @@ class FastAuthUserMixin:
     """
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
-    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    email: Mapped[EmailStr] = mapped_column(String, unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -62,8 +63,8 @@ class FastAuthSessionMixin:
     whatever your users table is actually called.
 
     Attributes:
-        id: Primary key, opaque session token (random string generated
-            by FastAuth).
+        id: Primary key, opaque session token. Random ``uuid4`` — never
+            time-ordered (``uuid7`` would be predictable across logins).
         expires_at: Timezone-aware expiry timestamp. Expired sessions
             are rejected by FastAuth.
         created_at: Timezone-aware creation timestamp.
@@ -87,6 +88,49 @@ class FastAuthSessionMixin:
     ```
     """
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FastAuthRefreshTokenMixin:
+    """Adds the required FastAuth columns to a refresh-token model.
+
+    JWT strategy only. Each row tracks one outstanding refresh token by its
+    JWT ``jti`` so rotation is single-use: consuming a refresh token deletes
+    its row, and presenting an already-consumed token revokes the whole
+    family (reuse detection). It does not define ``__tablename__`` or
+    ``user_id`` — you must add ``user_id`` yourself so the foreign key can
+    point at whatever your users table is actually called.
+
+    Attributes:
+        id: Primary key, mirrors the refresh JWT's ``jti`` (random
+            ``uuid4`` — never time-ordered, so ids are unpredictable).
+        expires_at: Timezone-aware expiry timestamp, mirrors the JWT
+            ``exp``. Expired tokens are rejected by FastAuth.
+        created_at: Timezone-aware creation timestamp.
+
+    Example:
+    ```python
+    import uuid
+    from sqlalchemy import ForeignKey
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+    from fastauth.models import FastAuthRefreshTokenMixin
+
+    class Base(DeclarativeBase):
+        pass
+
+    class RefreshTokens(Base, FastAuthRefreshTokenMixin):
+        __tablename__ = "refresh_tokens"
+
+        # Required: link each token back to a user.
+        # Replace "users.id" with your actual user table name if different.
+        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    ```
+    """
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
