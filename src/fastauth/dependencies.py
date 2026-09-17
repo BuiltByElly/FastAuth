@@ -17,7 +17,7 @@ from fastauth.models import FastAuthUserMixin
 from fastauth.routes.context import AuthContext
 
 # Shared bearer scheme (auto_error=False so we raise 401, not 403).
-bearer_scheme = HTTPBearer(auto_error=False)
+security = HTTPBearer(auto_error=False)
 
 
 def session_current_user(
@@ -45,9 +45,7 @@ def jwt_current_user(ctx: AuthContext) -> Callable[..., Awaitable[FastAuthUserMi
 
     async def _dependency(
         session: Annotated[AsyncSession, Depends(ctx.db_session_dependency)],
-        credentials: Annotated[
-            HTTPAuthorizationCredentials | None, Depends(bearer_scheme)
-        ],
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     ) -> FastAuthUserMixin:
         if credentials is None:
             raise HTTPException(

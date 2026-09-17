@@ -13,7 +13,7 @@ from fastauth import (
     JWTConfig,
     SQLAlchemyJWTAdapter,
 )
-from fastauth.models import FastAuthSessionMixin, FastAuthUserMixin
+from fastauth.models import FastAuthUserMixin
 
 from .database import engine, get_db
 

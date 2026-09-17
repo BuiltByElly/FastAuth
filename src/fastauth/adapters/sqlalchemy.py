@@ -41,7 +41,9 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
         refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
     ):
         """Bind a request session plus the app's User/Session models."""
-        super().__init__(db_session, user_model, session_model, jwt_config, refresh_model)
+        super().__init__(
+            db_session, user_model, session_model, jwt_config, refresh_model
+        )
 
     @classmethod
     def get_extra_fields(cls, model: type) -> dict[str, tuple[type, Any]]:
@@ -93,9 +95,9 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
         """Session id -> user, or None if missing/expired/inactive."""
         try:
             session_id = uuid.UUID(token)
-        except (ValueError, AttributeError, TypeError):
+        except ValueError, AttributeError, TypeError:
             return None
-        session = await self.db_session.get(self.session_model, session_id)  # type: ignore[call-arg]
+        session: Any = await self.db_session.get(self.session_model, session_id)  # type: ignore[call-arg]
         if session is None:
             return None
         expires = session.expires_at
@@ -114,7 +116,7 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
         """Delete the session row; unknown ids are ignored."""
         try:
             session_id = uuid.UUID(token)
-        except (ValueError, AttributeError, TypeError):
+        except ValueError, AttributeError, TypeError:
             return
         session = await self.db_session.get(self.session_model, session_id)  # type: ignore[call-arg]
         if session is not None:
@@ -140,7 +142,9 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
     ):
         """Bind a request session plus the app's User model (no sessions)."""
-        super().__init__(db_session, user_model, session_model, jwt_config, refresh_model)
+        super().__init__(
+            db_session, user_model, session_model, jwt_config, refresh_model
+        )
 
     @classmethod
     def get_extra_fields(cls, model: type) -> dict[str, tuple[type, Any]]:
@@ -183,9 +187,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             raise ValueError(msg)
         return self.jwt_config
 
-    def _encode(
-        self, user: UserT, token_type: str, expires_delta: timedelta
-    ) -> str:
+    def _encode(self, user: UserT, token_type: str, expires_delta: timedelta) -> str:
         """Sign one token with sub/exp/iat/jti/type claims."""
         cfg = self._require_config()
         now = datetime.now(UTC)
@@ -208,7 +210,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
                 algorithms=[cfg.algorithm],
                 options={"require": ["exp", "sub"]},
             )
-        except (jwt.InvalidTokenError, ValueError, AttributeError, TypeError):
+        except jwt.InvalidTokenError, ValueError, AttributeError, TypeError:
             return None
         if payload.get("type") != expected_type:
             return None
@@ -232,7 +234,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             return None
         try:
             user_id = uuid.UUID(str(payload["sub"]))
-        except (ValueError, AttributeError, TypeError):
+        except ValueError, AttributeError, TypeError:
             return None
         user = await self.get_user_by_id(user_id)
         if user is None or not user.is_active:
@@ -300,10 +302,10 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         try:
             jti = uuid.UUID(str(payload.get("jti")))
             user_id = uuid.UUID(str(payload["sub"]))
-        except (ValueError, AttributeError, TypeError):
+        except ValueError, AttributeError, TypeError:
             return None
         model = self._require_refresh_model()
-        row = await self.db_session.get(model, jti)
+        row: Any = await self.db_session.get(model, jti)
         if row is None:
             await self._revoke_refresh_family(user_id)
             return None
@@ -337,7 +339,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
                 options={"verify_exp": False},
             )
             jti = uuid.UUID(str(payload.get("jti")))
-        except (jwt.InvalidTokenError, ValueError, AttributeError, TypeError):
+        except jwt.InvalidTokenError, ValueError, AttributeError, TypeError:
             return
         row = await self.db_session.get(self.refresh_model, jti)
         if row is not None:

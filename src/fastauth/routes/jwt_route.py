@@ -1,9 +1,9 @@
 """JWT-strategy routes: stateless access tokens, rotating refresh cookies."""
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.cookies import (
@@ -12,7 +12,7 @@ from fastauth.cookies import (
     set_refresh_cookie,
 )
 from fastauth.models import FastAuthUserMixin
-from fastauth.routes.context import AuthContext, bearer_token
+from fastauth.routes.context import AuthContext
 from fastauth.schemas import LoginRequest, TokenResponse
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 

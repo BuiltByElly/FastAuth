@@ -39,11 +39,3 @@ class AuthContext:
             jwt_config=self.jwt_config,
             refresh_model=self.refresh_model,
         )
-
-
-def bearer_token(authorization: str | None) -> str | None:
-    """Extract the token from a 'Bearer <token>' header, or None."""
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization[len("Bearer ") :].strip()
-    return token or None

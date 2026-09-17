@@ -1,7 +1,7 @@
 """Per-request database bridge for FastAuth."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ UserT = TypeVar("UserT", bound=FastAuthUserMixin)
 SessionT = TypeVar("SessionT", bound=FastAuthSessionMixin)
 
 
-class Adapter(ABC, Generic[UserT, SessionT]):
+class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
     """Base adapter. Wraps one request-scoped session.
 
     Subclasses share method names; session vs JWT differ internally.
