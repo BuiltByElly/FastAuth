@@ -97,11 +97,14 @@ class FastAuthRefreshTokenMixin:
     """Adds the required FastAuth columns to a refresh-token model.
 
     JWT strategy only. Each row tracks one outstanding refresh token by its
-    JWT ``jti`` so rotation is single-use: consuming a refresh token deletes
-    its row, and presenting an already-consumed token revokes the whole
-    family (reuse detection). It does not define ``__tablename__`` or
-    ``user_id`` — you must add ``user_id`` yourself so the foreign key can
-    point at whatever your users table is actually called.
+    JWT ``jti`` so rotation is single-use: consuming a refresh token stamps
+    its ``used_at`` (soft delete — the row is kept), and presenting an
+    already-consumed token revokes the whole family (reuse detection). The
+    row is kept deliberately: it lets rotation distinguish "never existed"
+    (plain reject) from "existed and was already used" (theft response).
+    It does not define ``__tablename__`` or ``user_id`` — you must add
+    ``user_id`` yourself so the foreign key can point at whatever your
+    users table is actually called.
 
     Attributes:
         id: Primary key, mirrors the refresh JWT's ``jti`` (random
@@ -109,6 +112,10 @@ class FastAuthRefreshTokenMixin:
         expires_at: Timezone-aware expiry timestamp, mirrors the JWT
             ``exp``. Expired tokens are rejected by FastAuth.
         created_at: Timezone-aware creation timestamp.
+        consumed_at: Timezone-aware timestamp of single-use consumption,
+            or None while outstanding. Replaying a consumed token triggers
+            family revocation. Nullable so existing tables gain the column
+            via a trivial `ALTER TABLE ADD COLUMN`.
 
     Example:
     ```python
@@ -125,7 +132,7 @@ class FastAuthRefreshTokenMixin:
 
         # Required: link each token back to a user.
         # Replace "users.id" with your actual user table name if different.
-        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     ```
     """
 
@@ -134,3 +141,9 @@ class FastAuthRefreshTokenMixin:
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )

@@ -269,10 +269,10 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
     async def _revoke_refresh_family(self, user_id: uuid.UUID) -> None:
         """Delete every outstanding refresh row for a user (reuse defense)."""
         model = self._require_refresh_model()
-        await self.db_session.execute(
-            delete(model).where(model.user_id == user_id)  # type: ignore[attr-defined]
-        )
-        await self.db_session.flush()
+        row = await self.db_session.get(model, user_id)
+        if row is not None:
+            row.revoked_at = datetime.now(UTC)
+            await self.db_session.flush()
 
     async def issue_refresh_token(self, user: UserT) -> str:
         """Mint a refresh JWT and store its row for single-use rotation."""
@@ -304,10 +304,11 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         return token
 
     async def consume_refresh_token(self, token: str) -> UserT | None:
-        """Validate a refresh JWT single-use (burn its row) -> user or None.
+        """Validate a refresh JWT single-use (stamp it consumed) -> user or None.
 
-        A signed-but-unknown token means it was already consumed or revoked,
-        so assume theft and revoke the user's whole refresh family.
+        Soft delete is the point: a kept consumed row distinguishes "never
+        existed" (plain reject) from "existed and was already used" (theft
+        response — revoke the user's whole refresh family).
         """
         if not token:
             return None
@@ -321,29 +322,35 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             return None
         model = self._require_refresh_model()
         row: Any = await self.db_session.get(model, jti)
-        if row is None:
+        if row is None or row.revoked_at is not None:
+            return None
+        if row.used_at is not None:
             await self._revoke_refresh_family(user_id)
             return None
         expires = row.expires_at
         if expires is None:
-            await self.db_session.delete(row)
+            row.revoked_at = datetime.now(UTC)
             await self.db_session.flush()
             return None
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=UTC)
         if expires <= datetime.now(UTC):
-            await self.db_session.delete(row)
+            row.revoked_at = datetime.now(UTC)
             await self.db_session.flush()
             return None
         user = await self.get_user_by_id(row.user_id)
-        await self.db_session.delete(row)
+        row.used_at = datetime.now(UTC)
         await self.db_session.flush()
         if user is None or not user.is_active:
             return None
         return user
 
     async def revoke_refresh_token(self, token: str) -> None:
-        """Delete the refresh row for a (possibly expired) token; no raise."""
+        """Stamp the refresh row consumed for a (possibly expired) token.
+
+        The row is kept (not deleted) so replaying a logged-out token is
+        still recognizable as reuse. Never raises.
+        """
         if not token or self.jwt_config is None or self.refresh_model is None:
             return
         try:
@@ -356,7 +363,8 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             jti = uuid.UUID(str(payload.get("jti")))
         except jwt.InvalidTokenError, ValueError, AttributeError, TypeError:
             return
-        row = await self.db_session.get(self.refresh_model, jti)
-        if row is not None:
-            await self.db_session.delete(row)
+        row: Any = await self.db_session.get(self.refresh_model, jti)
+        if row is not None and row.used_at is None and row.revoked_at is None:
+            row.used_at = datetime.now(UTC)
+            row.revoked_at = datetime.now(UTC)
             await self.db_session.flush()

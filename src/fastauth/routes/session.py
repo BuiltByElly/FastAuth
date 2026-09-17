@@ -57,13 +57,18 @@ def register_session_routes(
         if user is None:
             verify_password(payload.password, DUMMY_PASSWORD_HASH, hasher)
             raise HTTPException(status_code=401, detail="Invalid credentials.")
+
         if not verify_password(payload.password, user.hashed_password, hasher):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
+
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account is inactive.")
+
         old_token = request.cookies.get(cookies.session_cookie_name)
+
         if old_token is not None:
             await adapter.revoke_credential(old_token)
+
         record: Any = await adapter.issue_credential(user)
         await db_session.commit()
         expires_at = record.expires_at

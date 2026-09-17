@@ -44,7 +44,7 @@ class RefreshToken(Base, FastAuthRefreshTokenMixin):
 
     __tablename__ = "refresh_tokens"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
 
 
 @asynccontextmanager

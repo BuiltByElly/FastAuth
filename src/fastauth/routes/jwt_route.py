@@ -134,7 +134,6 @@ def register_jwt_routes(
 
     @router.get("/me", response_model=UserResponse)
     async def me(
-        session: Annotated[AsyncSession, DependsSession],
         current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
     ):
         """Return the user behind the bearer token."""
