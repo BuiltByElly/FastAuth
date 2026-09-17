@@ -6,7 +6,7 @@ from typing import Any
 
 import jwt
 from pwdlib import PasswordHash
-from sqlalchemy import delete, inspect, select
+from sqlalchemy import inspect, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter, SessionT, UserT
@@ -257,7 +257,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         return user
 
     async def revoke_credential(self, token: str) -> None:
-        """No-op: stateless tokens can't be revoked server-side (placeholder)."""
+        """No-op: stateless access tokens can't be revoked server-side."""
 
     def _require_refresh_model(self) -> type[FastAuthRefreshTokenMixin]:
         """Return refresh_model or fail fast when the adapter is miswired."""
@@ -267,12 +267,14 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         return self.refresh_model
 
     async def _revoke_refresh_family(self, user_id: uuid.UUID) -> None:
-        """Delete every outstanding refresh row for a user (reuse defense)."""
+        """Stamp revoked_at on every refresh row for a user (reuse defense)."""
         model = self._require_refresh_model()
-        row = await self.db_session.get(model, user_id)
-        if row is not None:
-            row.revoked_at = datetime.now(UTC)
-            await self.db_session.flush()
+        await self.db_session.execute(
+            update(model)
+            .where(model.user_id == user_id)  # type: ignore[attr-defined]
+            .values(revoked_at=datetime.now(UTC))
+        )
+        await self.db_session.flush()
 
     async def issue_refresh_token(self, user: UserT) -> str:
         """Mint a refresh JWT and store its row for single-use rotation."""

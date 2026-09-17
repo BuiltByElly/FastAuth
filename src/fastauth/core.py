@@ -1,10 +1,12 @@
 """FastAuth entrypoint: config + per-instance router."""
 
 from collections.abc import AsyncGenerator, Callable
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
 from fastapi import APIRouter
+from sqlalchemy import delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
@@ -116,6 +118,37 @@ class FastAuth:
         tags = tags or ["Authentication"]
         self.router = APIRouter(prefix=prefix, tags=tags)
         self._register_routes()
+
+    async def purge_expired_refresh_tokens(self, session: AsyncSession) -> int:
+        """Delete expired refresh-token rows; returns the deleted count.
+
+        Expired rows are useless even for reuse detection (their JWTs fail
+        the `exp` check before the row is ever read), so this only removes
+        garbage. Outstanding and consumed-but-unexpired rows are kept.
+
+        Flushes; the caller commits. Designed for a scheduler job, e.g.::
+
+            async def purge_job() -> None:
+                async with session_factory() as session:
+                    deleted = await auth.purge_expired_refresh_tokens(session)
+                    await session.commit()
+                    logger.info("purged %d refresh tokens", deleted)
+        """
+        if self.refresh_model is None:
+            msg = (
+                "purge_expired_refresh_tokens requires a refresh_model (JWT strategy)."
+            )
+            raise ValueError(msg)
+        result = await session.execute(
+            delete(self.refresh_model).where(
+                or_(
+                    self.refresh_model.expires_at.is_(None),
+                    self.refresh_model.expires_at <= datetime.now(UTC),
+                )
+            )
+        )
+        await session.flush()
+        return result.rowcount  # type: ignore[attr-defined]
 
     def build_adapter(self, db_session: AsyncSession) -> Adapter:
         """Wrap the request's db session. Sync: no I/O, cheap per-request bind."""
