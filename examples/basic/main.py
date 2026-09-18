@@ -7,12 +7,12 @@ from fastapi import FastAPI
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from fastauth import (
+from fastauth import FastAuth
+from fastauth.adapters import SQLAlchemySessionAdapter
+from fastauth.config import (
     CookieConfig,
-    FastAuth,
     FastAuthConfig,
     PasswordConfig,
-    SQLAlchemySessionAdapter,
 )
 from fastauth.models import FastAuthSessionMixin, FastAuthUserMixin
 

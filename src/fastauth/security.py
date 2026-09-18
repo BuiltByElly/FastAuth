@@ -1,4 +1,7 @@
-"""Password hashing helpers (argon2 via pwdlib by default)."""
+"""
+(Do not import directly)
+Password hashing helpers (argon2 via pwdlib by default).
+"""
 
 from collections.abc import Callable
 

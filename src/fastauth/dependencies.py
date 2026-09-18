@@ -1,4 +1,6 @@
-"""Dev-facing `current_user` dependencies, one per strategy.
+"""
+(Do not import directly)
+Dev-facing `current_user` dependencies, one per strategy.
 
 Build them from an `AuthContext` (normally via `auth.current_user`, which
 picks the right one for the instance's strategy), or call the builders

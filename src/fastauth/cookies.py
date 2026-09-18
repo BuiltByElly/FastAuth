@@ -1,4 +1,6 @@
-"""Cookie helpers: one naming convention for both strategies.
+"""
+(Do not import directly)
+Cookie helpers: one naming convention for both strategies.
 
 Session strategy stores the session id in ``SESSION_COOKIE_NAME``.
 JWT strategy stores the refresh token in ``REFRESH_COOKIE_NAME`` only —
