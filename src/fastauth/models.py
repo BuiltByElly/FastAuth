@@ -147,3 +147,11 @@ class FastAuthRefreshTokenMixin:
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
+
+
+class FastAuthRateLimitMixin:
+    """Inherit + add __tablename__, same pattern as other FastAuth mixins."""
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+    count: Mapped[int] = mapped_column(default=0)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))

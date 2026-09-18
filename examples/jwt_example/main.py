@@ -8,14 +8,11 @@ from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import (
-    CookieConfig,
-    FastAuth,
-    FastAuthConfig,
-    FastAuthRefreshTokenMixin,
-    JWTConfig,
-    SQLAlchemyJWTAdapter,
+    JWTAuth,
 )
-from fastauth.models import FastAuthUserMixin
+from fastauth.adapters import SQLAlchemyJWTAdapter
+from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig
+from fastauth.models import FastAuthRefreshTokenMixin, FastAuthUserMixin
 
 from .database import engine, get_db
 
@@ -58,7 +55,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-auth = FastAuth(
+auth = JWTAuth(
     adapter=SQLAlchemyJWTAdapter,
     user_model=User,
     refresh_model=RefreshToken,
@@ -67,7 +64,6 @@ auth = FastAuth(
         cookies=CookieConfig(refresh_cookie_name="refreshing"),
     ),
     db_session_dependency=get_db,
-    strategy="jwt",
 )
 
 app.include_router(auth.router)

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
 from fastauth.config import FastAuthConfig
+from fastauth.dependencies.rate_limiter import RateLimiter
 from fastauth.models import (
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
@@ -30,6 +31,7 @@ class AuthContext:
     user_response_schema: type[BaseModel]
     strategy: Literal["session", "jwt"]
     config: FastAuthConfig
+    rate_limiter: RateLimiter
     password_hasher: PasswordHash | None = None
     refresh_model: type[FastAuthRefreshTokenMixin] | None = None
 

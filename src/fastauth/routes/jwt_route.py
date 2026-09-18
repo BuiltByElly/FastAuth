@@ -35,8 +35,13 @@ def register_jwt_routes(
     DependsSession = Depends(ctx.db_session_dependency)
     cookies = ctx.config.cookies
     hasher = ctx.password_hasher
+    DependsSignupLimit = Depends(ctx.rate_limiter.limit_for("/signup"))
+    DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/login"))
+    DependsRefreshLimit = Depends(ctx.rate_limiter.limit_for("/refresh"))
 
-    @router.post("/signup", response_model=UserResponse)
+    @router.post(
+        "/signup", response_model=UserResponse, dependencies=[DependsSignupLimit]
+    )
     async def signup(
         payload: SignupRequest,  # type: ignore[valid-type]
         session: Annotated[AsyncSession, DependsSession],
@@ -49,7 +54,9 @@ def register_jwt_routes(
         await session.commit()
         return user
 
-    @router.post("/login", response_model=TokenResponse)
+    @router.post(
+        "/login", response_model=TokenResponse, dependencies=[DependsLoginLimit]
+    )
     async def login(
         payload: LoginRequest,  # type: ignore[valid-type]
         response: Response,
@@ -78,7 +85,9 @@ def register_jwt_routes(
         )
         return TokenResponse(access_token=access_token)
 
-    @router.post("/refresh", response_model=TokenResponse)
+    @router.post(
+        "/refresh", response_model=TokenResponse, dependencies=[DependsRefreshLimit]
+    )
     async def refresh(
         response: Response,
         request: Request,

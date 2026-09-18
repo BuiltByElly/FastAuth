@@ -17,6 +17,40 @@ SameSite = Literal["lax", "strict", "none"]
 JWTAlgorithm = Literal["HS256", "HS384", "HS512"]
 
 
+class RateLimitConfig(BaseModel):
+    """Rate limiting for the FastAuth auth routes.
+
+    Args:
+        enabled: Master switch. Disabled → no storage, no limits, nothing raises.
+        window: Global time window in seconds.
+        max_requests: Global max hits per window.
+        storage: "memory" (zero setup, single process) or "database"
+            (multi-worker; requires rate_limit_model + rate_limiter_adapter).
+        trusted_ip_header: Opt-in header for real client IP behind a proxy
+            (e.g. "x-forwarded-for"). None = request.client.host only.
+        custom_rules: Per-route (window, max) overrides, keyed by route path.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = True
+    window: int = Field(default=60, gt=0)  # seconds
+    max_requests: int = Field(default=100, gt=0)
+    # Memory by default so FastAuth works with zero setup (single process).
+    # Switch to "database" + a rate_limit_model for multi-worker deployments.
+    storage: Literal["database", "memory"] = "memory"
+    trusted_ip_header: str | None = None
+
+    # per-route overrides, Better Auth style — path -> (window, max)
+    custom_rules: dict[str, tuple[int, int]] = Field(
+        default_factory=lambda: {
+            "/login": (10, 5),
+            "/signup": (60, 3),
+            "/refresh": (60, 10),
+        }
+    )
+
+
 class JWTConfig(BaseModel):
     """Settings the JWT strategy signs and validates tokens with.
 
@@ -119,5 +153,7 @@ class FastAuthConfig(BaseModel):
     session: SessionConfig = SessionConfig()
     cookies: CookieConfig = CookieConfig()
     password: PasswordConfig = PasswordConfig()
+    rate_limit: RateLimitConfig = RateLimitConfig()
+
     """Required iff strategy="jwt" (validated in `FastAuth.__init__`)."""
     jwt: JWTConfig | None = None

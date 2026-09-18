@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from fastauth import FastAuth
+from fastauth import SessionAuth
 from fastauth.adapters import SQLAlchemySessionAdapter
 from fastauth.config import (
     CookieConfig,
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-auth = FastAuth(
+auth = SessionAuth(
     adapter=SQLAlchemySessionAdapter,
     user_model=User,
     session_model=Session,
@@ -68,7 +68,6 @@ auth = FastAuth(
         ),
     ),
     db_session_dependency=get_db,
-    strategy="session",
 )
 
 app.include_router(auth.router)

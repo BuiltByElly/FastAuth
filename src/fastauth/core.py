@@ -1,4 +1,10 @@
-"""FastAuth entrypoint: config + per-instance router."""
+"""FastAuth entrypoints: one auth class per strategy, shared base.
+
+`SessionAuth` and `JWTAuth` own their models, routes, and `current_user`
+dependency — no `strategy` flag, no `if/else` branching. Common setup
+(config, schemas, router, adapter binding) lives on the `FastAuth` base.
+Rate limiting is a separate component, see `fastauth.dependencies.rate_limiter`.
+"""
 
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime
@@ -9,9 +15,11 @@ from fastapi import APIRouter
 from sqlalchemy import delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastauth.adapters.adapters import Adapter
-from fastauth.dependencies import jwt_current_user, session_current_user
+from fastauth.adapters.adapters import Adapter, RateLimiterAdapter
+from fastauth.dependencies.current_user import jwt_current_user, session_current_user
+from fastauth.dependencies.rate_limiter import RateLimiter
 from fastauth.models import (
+    FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
     FastAuthUserMixin,
@@ -30,64 +38,46 @@ from .config import FastAuthConfig
 
 
 class FastAuth:
-    """Configure auth once, mount `auth.router` on your app.
+    """Shared base: config, schemas, router, and per-request adapter binding.
 
-    Owns its own APIRouter (no shared/global state). Route modules
-    per strategy (session/jwt) register onto it at startup.
-
-    `auth.current_user` is a dependency resolving the request's user
-    (session cookie for the session strategy, bearer token for JWT):
-    use it as `Depends(auth.current_user)` in your own routes.
+    Not usable on its own (registers no routes, sets no `current_user`) —
+    use `SessionAuth` or `JWTAuth`. Owns its own APIRouter, so instances
+    never share state.
     """
+
+    strategy: Literal["session", "jwt"]
 
     def __init__(
         self,
         adapter: type[Adapter],
         db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
         user_model: type[FastAuthUserMixin],
-        session_model: type[FastAuthSessionMixin] | None = None,
-        refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
+        rate_limit_model: type[FastAuthRateLimitMixin] | None = None,
+        rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
         tags: list[str | Enum] | None = None,
-        strategy: Literal["session", "jwt"] = "session",
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
     ):
-        """Bind models + session provider; build schemas, router, routes.
+        """Bind shared setup; subclasses mount their routes.
 
         Args:
-            adapter: Adapter class, built per request (session or JWT flavor).
-            user_model: App's User model (uses FastAuthUserMixin).
-            session_model: App's Session model (required for session, None for JWT).
-            db_session_dependency: FastAPI dependency yielding an AsyncSession.
-            tags: Optional list of tags for the router.
-            strategy: Which route module to mount.
-            prefix: Router prefix.
-            config: Single config object (lifetimes, cookies, password
-                policy, JWT). Defaults to `FastAuthConfig()` — secure and
-                working out of the box. JWT strategy requires `config.jwt`;
-                JWT strategy also requires a refresh_model.
-            refresh_model: App's refresh-token model (required for JWT;
-                enables single-use rotation + reuse detection).
+            adapter: Per-request DB bridge (session or JWT flavor).
+            db_session_dependency: FastAPI dep yielding an AsyncSession.
+            user_model: App User (uses FastAuthUserMixin).
+            rate_limit_model: App rate-limit model (database storage only).
+            rate_limiter_adapter: ORM adapter class (required for database storage).
+            tags: Router tags. prefix: Router prefix.
+            config: Single config object; defaults to `FastAuthConfig()`.
         """
-        if strategy == "session" and session_model is None:
-            msg = "Session strategy requires a session_model."
-            raise ValueError(msg)
-
         cfg = config or FastAuthConfig()
-
-        if strategy == "jwt" and cfg.jwt is None:
-            msg = "JWT strategy requires config.jwt (pass FastAuthConfig with jwt=JWTConfig(...))."
-            raise ValueError(msg)
-
-        if strategy == "jwt" and refresh_model is None:
-            msg = "JWT strategy requires a refresh_model."
-            raise ValueError(msg)
-
-        self.strategy = strategy
         self.config = cfg
-        self.jwt_config = cfg.jwt
-        self.refresh_model = refresh_model
         self.password_hasher = build_hasher(cfg.password.hash_schemes)
+        self.rate_limiter = RateLimiter(
+            db_session_dependency=db_session_dependency,
+            rate_limit_model=rate_limit_model,
+            rate_limit_config=cfg.rate_limit,
+            rate_limiter_adapter=rate_limiter_adapter,
+        )
 
         self.signup_schema = build_signup_schema(
             adapter.get_extra_fields(user_model),
@@ -101,23 +91,111 @@ class FastAuth:
         self.ctx = AuthContext(
             adapter_class=adapter,
             user_model=user_model,
-            session_model=session_model,
+            session_model=None,
             db_session_dependency=db_session_dependency,
             signup_schema=self.signup_schema,
             login_schema=self.login_schema,
             user_response_schema=self.user_response_schema,
-            strategy=strategy,
+            strategy=self.strategy,
             config=cfg,
             password_hasher=self.password_hasher,
-            refresh_model=refresh_model,
+            refresh_model=None,
+            rate_limiter=self.rate_limiter,
         )
-        if strategy == "session":
-            self.current_user = session_current_user(self.ctx)
-        else:
-            self.current_user = jwt_current_user(self.ctx)
         tags = tags or ["Authentication"]
         self.router = APIRouter(prefix=prefix, tags=tags)
-        self._register_routes()
+
+
+class SessionAuth(FastAuth):
+    """DB-backed session auth (cookie transport, server-side rows).
+
+    `auth.current_user` resolves the user from the session cookie:
+    use it as `Depends(auth.current_user)` in your own routes.
+    """
+
+    strategy = "session"
+
+    def __init__(
+        self,
+        adapter: type[Adapter],
+        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
+        user_model: type[FastAuthUserMixin],
+        session_model: type[FastAuthSessionMixin],
+        rate_limit_model: type[FastAuthRateLimitMixin] | None = None,
+        rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
+        tags: list[str | Enum] | None = None,
+        prefix: str = "/auth",
+        config: FastAuthConfig | None = None,
+    ):
+        """Bind models + session provider; mount signup/login/logout/me.
+
+        Args:
+            session_model: App Session (uses FastAuthSessionMixin).
+            rate_limit_model: App rate-limit model (database storage only).
+            rate_limiter_adapter: ORM adapter class (required for database storage).
+        """
+        super().__init__(
+            adapter=adapter,
+            db_session_dependency=db_session_dependency,
+            user_model=user_model,
+            rate_limit_model=rate_limit_model,
+            rate_limiter_adapter=rate_limiter_adapter,
+            tags=tags,
+            prefix=prefix,
+            config=config,
+        )
+
+        self.current_user = session_current_user(self.ctx)
+        self.ctx.session_model = session_model
+        register_session_routes(self.router, self.ctx, self.current_user)
+
+
+class JWTAuth(FastAuth):
+    """Stateless JWT access tokens + rotating refresh cookies.
+
+    `auth.current_user` resolves the user from the bearer access token:
+    use it as `Depends(auth.current_user)` in your own routes.
+    """
+
+    strategy = "jwt"
+
+    def __init__(
+        self,
+        adapter: type[Adapter],
+        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
+        user_model: type[FastAuthUserMixin],
+        refresh_model: type[FastAuthRefreshTokenMixin],
+        rate_limit_model: type[FastAuthRateLimitMixin] | None = None,
+        rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
+        tags: list[str | Enum] | None = None,
+        prefix: str = "/auth",
+        config: FastAuthConfig | None = None,
+    ):
+        """Bind models + session provider; mount signup/login/refresh/logout/me.
+
+        Args:
+            refresh_model: App refresh-token model (single-use rotation).
+            rate_limit_model: App rate-limit model (database storage only).
+            rate_limiter_adapter: ORM adapter class (required for database storage).
+            config: Must include `jwt` (secret, algorithm, lifetimes).
+        """
+        super().__init__(
+            adapter=adapter,
+            db_session_dependency=db_session_dependency,
+            user_model=user_model,
+            rate_limit_model=rate_limit_model,
+            rate_limiter_adapter=rate_limiter_adapter,
+            tags=tags,
+            prefix=prefix,
+            config=config,
+        )
+        if self.config.jwt is None:
+            msg = "JWTAuth requires config.jwt (pass FastAuthConfig with jwt=JWTConfig(...))."
+            raise ValueError(msg)
+        self.refresh_model = refresh_model
+        self.ctx.refresh_model = refresh_model
+        self.current_user = jwt_current_user(self.ctx)
+        register_jwt_routes(self.router, self.ctx, self.current_user)
 
     async def purge_expired_refresh_tokens(self, session: AsyncSession) -> int:
         """Delete expired refresh-token rows; returns the deleted count.
@@ -134,29 +212,13 @@ class FastAuth:
                     await session.commit()
                     logger.info("purged %d refresh tokens", deleted)
         """
-        if self.refresh_model is None:
-            msg = (
-                "purge_expired_refresh_tokens requires a refresh_model (JWT strategy)."
-            )
-            raise ValueError(msg)
         result = await session.execute(
             delete(self.refresh_model).where(
                 or_(
-                    self.refresh_model.expires_at.is_(None),
-                    self.refresh_model.expires_at <= datetime.now(UTC),
+                    self.refresh_model.expires_at.is_(None),  # type: ignore[attr-defined]
+                    self.refresh_model.expires_at <= datetime.now(UTC),  # type: ignore[attr-defined]
                 )
             )
         )
         await session.flush()
         return result.rowcount  # type: ignore[attr-defined]
-
-    def build_adapter(self, db_session: AsyncSession) -> Adapter:
-        """Wrap the request's db session. Sync: no I/O, cheap per-request bind."""
-        return self.ctx.build_adapter(db_session)
-
-    def _register_routes(self) -> None:
-        """Mount the strategy's routes. Sync: runs once at startup, no I/O."""
-        if self.strategy == "session":
-            register_session_routes(self.router, self.ctx, self.current_user)
-        else:
-            register_jwt_routes(self.router, self.ctx, self.current_user)

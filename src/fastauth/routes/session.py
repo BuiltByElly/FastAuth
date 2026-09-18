@@ -30,8 +30,12 @@ def register_session_routes(
     DependsSession = Depends(ctx.db_session_dependency)
     cookies = ctx.config.cookies
     hasher = ctx.password_hasher
+    DependsSignupLimit = Depends(ctx.rate_limiter.limit_for("/signup"))
+    DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/login"))
 
-    @router.post("/signup", response_model=UserResponse)
+    @router.post(
+        "/signup", response_model=UserResponse, dependencies=[DependsSignupLimit]
+    )
     async def signup(
         payload: SignupRequest,  # type: ignore[valid-type]
         db_session: Annotated[AsyncSession, DependsSession],
@@ -44,7 +48,7 @@ def register_session_routes(
         await db_session.commit()
         return user
 
-    @router.post("/login")
+    @router.post("/login", dependencies=[DependsLoginLimit])
     async def login(
         payload: LoginRequest,  # type: ignore[valid-type]
         response: Response,
