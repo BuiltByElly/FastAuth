@@ -11,8 +11,13 @@ from fastauth import (
     JWTAuth,
 )
 from fastauth.adapters import SQLAlchemyJWTAdapter
-from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig
-from fastauth.models import FastAuthRefreshTokenMixin, FastAuthUserMixin
+from fastauth.adapters.rate_limit import SQLAlchemyRateLimiter
+from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
+from fastauth.models import (
+    FastAuthRateLimitMixin,
+    FastAuthRefreshTokenMixin,
+    FastAuthUserMixin,
+)
 
 from .database import engine, get_db
 
@@ -44,6 +49,12 @@ class RefreshToken(Base, FastAuthRefreshTokenMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
 
 
+class RateLimitModel(Base, FastAuthRateLimitMixin):
+    """App rate limit model."""
+
+    __tablename__ = "rate_limits"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create tables on startup, dispose engine on shutdown."""
@@ -59,9 +70,12 @@ auth = JWTAuth(
     adapter=SQLAlchemyJWTAdapter,
     user_model=User,
     refresh_model=RefreshToken,
+    rate_limit_model=RateLimitModel,
+    rate_limiter_adapter=SQLAlchemyRateLimiter,
     config=FastAuthConfig(
         jwt=JWTConfig(secret_key="gt0tl4mZRz/XQ7+i96tPYh1XHg8U7FiU62a9QJG3n6s="),
         cookies=CookieConfig(refresh_cookie_name="refreshing"),
+        rate_limit=RateLimitConfig(storage="database"),
     ),
     db_session_dependency=get_db,
 )

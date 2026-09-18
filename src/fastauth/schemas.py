@@ -34,7 +34,7 @@ class TokenResponse(BaseModel):
     """JWT login/refresh response: signed access token."""
 
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "access"
 
 
 class SessionResponse(BaseModel):
