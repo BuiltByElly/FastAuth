@@ -10,9 +10,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from fastauth import (
     JWTAuth,
 )
-from fastauth.adapters import SQLAlchemyJWTAdapter
+from fastauth.adapters import SQLAlchemyJWTAdapter, rate_limit
 from fastauth.adapters.rate_limit import SQLAlchemyRateLimiter
 from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
+from fastauth.dependencies.rate_limiter import RateLimiter
 from fastauth.models import (
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
@@ -66,18 +67,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+rate_limiter = RateLimiter(
+    rate_limit_model=RateLimitModel,
+    rate_limiter_adapter=SQLAlchemyRateLimiter,
+    db_session_dependency=get_db,
+    rate_limit_config=RateLimitConfig(storage="database"),
+)
+
 auth = JWTAuth(
     adapter=SQLAlchemyJWTAdapter,
     user_model=User,
     refresh_model=RefreshToken,
-    rate_limit_model=RateLimitModel,
-    rate_limiter_adapter=SQLAlchemyRateLimiter,
     config=FastAuthConfig(
         jwt=JWTConfig(secret_key="gt0tl4mZRz/XQ7+i96tPYh1XHg8U7FiU62a9QJG3n6s="),
         cookies=CookieConfig(refresh_cookie_name="refreshing"),
-        rate_limit=RateLimitConfig(storage="database"),
     ),
     db_session_dependency=get_db,
+    rate_limiter=rate_limiter,
 )
 
 app.include_router(auth.router)

@@ -52,8 +52,7 @@ class FastAuth:
         adapter: type[Adapter],
         db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
         user_model: type[FastAuthUserMixin],
-        rate_limit_model: type[FastAuthRateLimitMixin] | None = None,
-        rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
+        rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
@@ -64,19 +63,15 @@ class FastAuth:
             adapter: Per-request DB bridge (session or JWT flavor).
             db_session_dependency: FastAPI dep yielding an AsyncSession.
             user_model: App User (uses FastAuthUserMixin).
-            rate_limit_model: App rate-limit model (database storage only).
-            rate_limiter_adapter: ORM adapter class (required for database storage).
+            rate_limiter: Rate limiter instance (optional).
             tags: Router tags. prefix: Router prefix.
             config: Single config object; defaults to `FastAuthConfig()`.
         """
         cfg = config or FastAuthConfig()
         self.config = cfg
         self.password_hasher = build_hasher(cfg.password.hash_schemes)
-        self.rate_limiter = RateLimiter(
-            db_session_dependency=db_session_dependency,
-            rate_limit_model=rate_limit_model,
-            rate_limit_config=cfg.rate_limit,
-            rate_limiter_adapter=rate_limiter_adapter,
+        self.rate_limiter = rate_limiter or RateLimiter(
+            rate_limit_config=cfg.rate_limit
         )
 
         self.signup_schema = build_signup_schema(
@@ -121,25 +116,17 @@ class SessionAuth(FastAuth):
         db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
         user_model: type[FastAuthUserMixin],
         session_model: type[FastAuthSessionMixin],
-        rate_limit_model: type[FastAuthRateLimitMixin] | None = None,
-        rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
+        rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
     ):
-        """Bind models + session provider; mount signup/login/logout/me.
-
-        Args:
-            session_model: App Session (uses FastAuthSessionMixin).
-            rate_limit_model: App rate-limit model (database storage only).
-            rate_limiter_adapter: ORM adapter class (required for database storage).
-        """
+        """Bind models + session provider; mount signup/login/logout/me."""
         super().__init__(
             adapter=adapter,
             db_session_dependency=db_session_dependency,
             user_model=user_model,
-            rate_limit_model=rate_limit_model,
-            rate_limiter_adapter=rate_limiter_adapter,
+            rate_limiter=rate_limiter,
             tags=tags,
             prefix=prefix,
             config=config,
@@ -165,8 +152,7 @@ class JWTAuth(FastAuth):
         db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
         user_model: type[FastAuthUserMixin],
         refresh_model: type[FastAuthRefreshTokenMixin],
-        rate_limit_model: type[FastAuthRateLimitMixin] | None = None,
-        rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
+        rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
@@ -175,16 +161,14 @@ class JWTAuth(FastAuth):
 
         Args:
             refresh_model: App refresh-token model (single-use rotation).
-            rate_limit_model: App rate-limit model (database storage only).
-            rate_limiter_adapter: ORM adapter class (required for database storage).
+            rate_limiter: Rate limiter instance (optional).
             config: Must include `jwt` (secret, algorithm, lifetimes).
         """
         super().__init__(
             adapter=adapter,
             db_session_dependency=db_session_dependency,
             user_model=user_model,
-            rate_limit_model=rate_limit_model,
-            rate_limiter_adapter=rate_limiter_adapter,
+            rate_limiter=rate_limiter,
             tags=tags,
             prefix=prefix,
             config=config,

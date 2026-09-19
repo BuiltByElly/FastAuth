@@ -38,6 +38,7 @@ def register_jwt_routes(
     DependsSignupLimit = Depends(ctx.rate_limiter.limit_for("/signup"))
     DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/login"))
     DependsRefreshLimit = Depends(ctx.rate_limiter.limit_for("/refresh"))
+    DependsGeneral = Depends(ctx.rate_limiter.limit())
 
     @router.post(
         "/signup", response_model=TokenResponse, dependencies=[DependsSignupLimit]
@@ -152,12 +153,12 @@ def register_jwt_routes(
         )
         return {"message": "logged out"}
 
-    @router.get("/me", response_model=UserResponse)
+    @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
     async def me(
         current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
     ):
         """Return the user behind the bearer token."""
         user = current_user
         if user is None:
-            raise HTTPException(status_code=401, detail="Invalid token.")
+            raise HTTPException(status_code=401, detail="Not authenticated.")
         return user

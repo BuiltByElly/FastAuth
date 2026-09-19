@@ -32,6 +32,7 @@ def register_session_routes(
     hasher = ctx.password_hasher
     DependsSignupLimit = Depends(ctx.rate_limiter.limit_for("/signup"))
     DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/login"))
+    DependsGeneral = Depends(ctx.rate_limiter.limit())
 
     @router.post(
         "/signup", response_model=UserResponse, dependencies=[DependsSignupLimit]
@@ -112,7 +113,7 @@ def register_session_routes(
         )
         return {"success": True, "message": "logged out"}
 
-    @router.get("/me", response_model=UserResponse)
+    @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
     async def me(
         current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
     ):

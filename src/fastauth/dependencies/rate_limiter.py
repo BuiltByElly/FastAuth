@@ -44,21 +44,21 @@ class RateLimiter:
             rate_limit_model: App rate-limit model (database storage only).
             rate_limit_config: Limits, storage, per-route rules. Disabled → no-ops.
         """
-        self.config = rate_limit_config or RateLimitConfig()
-        self.dependency: Callable[..., Awaitable[RateLimiterAdapter]] | None = None
+        self._config = rate_limit_config or RateLimitConfig()
+        self._dependency: Callable[..., Awaitable[RateLimiterAdapter]] | None = None
 
-        if not self.config.enabled:
+        if not self._config.enabled:
             return  # no storage needed; limit()/limit_for() will return no-ops
 
-        if self.config.storage == "memory":
+        if self._config.storage == "memory":
             limiter = InMemoryRateLimiter()
 
             async def _provide_memory() -> RateLimiterAdapter:
                 return limiter
 
-            self.dependency = _provide_memory
+            self._dependency = _provide_memory
 
-        elif self.config.storage == "database":
+        elif self._config.storage == "database":
             if rate_limit_model is None:
                 raise ValueError(
                     "storage='database' requires a rate_limit_model (inherit FastAuthRateLimitMixin)."
@@ -75,10 +75,10 @@ class RateLimiter:
                     db_session=db_session, model=rate_limit_model
                 )
 
-            self.dependency = _provide_db
+            self._dependency = _provide_db
 
         else:
-            raise ValueError(f"Unknown rate limit storage: {self.config.storage!r}")
+            raise ValueError(f"Unknown rate limit storage: {self._config.storage!r}")
 
     def limit_for(self, path: str) -> DependencyFn:
         """Dependency for one route: `custom_rules[path]`, else globals.
@@ -86,8 +86,8 @@ class RateLimiter:
         Args:
             path: Route path as in `custom_rules` (e.g. "/login").
         """
-        window, max_requests = self.config.custom_rules.get(
-            path, (self.config.window, self.config.max_requests)
+        window, max_requests = self._config.custom_rules.get(
+            path, (self._config.window, self._config.max_requests)
         )
         return self.limit(window=window, max_requests=max_requests)
 
@@ -98,19 +98,26 @@ class RateLimiter:
 
         Args:
             window: Time window in seconds. max_requests: Max hits per window.
+
+        Usage:
+            You can use this as a dependency in your FastAPI route if you want to implement
+            FastAuth's rate limiting logic (Fixed-window rate limiting).
+
+            rate_limiter = RateLimiter().limit(window, max_requests) -> DependencyFn
+            @router.get("/", dependencies=[rate_limiter])
         """
-        if not self.config.enabled or self.dependency is None:
+        if not self._config.enabled or self._dependency is None:
 
             async def _noop(request: Request) -> None:
                 return None
 
             return _noop
 
-        win = self.config.window if window is None else window
-        max_reqs = self.config.max_requests if max_requests is None else max_requests
-        get_limiter = self.dependency
+        win = self._config.window if window is None else window
+        max_reqs = self._config.max_requests if max_requests is None else max_requests
+        get_limiter = self._dependency
         trusted_header = (
-            self.config.trusted_ip_header
+            self._config.trusted_ip_header
         )  # None = use request.client.host only
 
         async def _dependency(
