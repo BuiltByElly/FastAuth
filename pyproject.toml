@@ -23,6 +23,26 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
+    "coverage>=7.10.0",
     "fastapi[standard]>=0.141.1",
     "pwdlib[bcrypt]>=0.3.1",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.26.0",
+    "pytest-cov>=6.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["fastauth"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
 ]

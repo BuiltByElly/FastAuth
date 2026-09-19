@@ -39,12 +39,22 @@ def register_session_routes(
     async def signup(
         payload: SignupRequest,  # type: ignore[valid-type]
         db_session: Annotated[AsyncSession, DependsSession],
+        response: Response,
     ):
         """Create a user unless the email is taken."""
         adapter = ctx.build_adapter(db_session)
         if await adapter.get_user_by_email(payload.email):  # type: ignore[attr-defined]
             raise HTTPException(status_code=400, detail="Email already registered.")
         user = await adapter.create_user(payload.model_dump())
+        record: Any = await adapter.issue_credential(user)
+        await db_session.commit()
+        expires_at = record.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        max_age = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
+        set_session_cookie(
+            response, str(record.id), **session_cookie_kwargs(cookies, max_age=max_age)
+        )
         await db_session.commit()
         return user
 

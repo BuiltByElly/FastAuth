@@ -40,19 +40,30 @@ def register_jwt_routes(
     DependsRefreshLimit = Depends(ctx.rate_limiter.limit_for("/refresh"))
 
     @router.post(
-        "/signup", response_model=UserResponse, dependencies=[DependsSignupLimit]
+        "/signup", response_model=TokenResponse, dependencies=[DependsSignupLimit]
     )
     async def signup(
         payload: SignupRequest,  # type: ignore[valid-type]
         session: Annotated[AsyncSession, DependsSession],
+        response: Response,
     ):
         """Create a user unless the email is taken."""
         adapter = ctx.build_adapter(session)
         if await adapter.get_user_by_email(payload.email):  # type: ignore[attr-defined]
             raise HTTPException(status_code=400, detail="Email already registered.")
         user = await adapter.create_user(payload.model_dump())
+        access_token = str(await adapter.issue_credential(user))
+        refresh_token = await adapter.issue_refresh_token(user)
         await session.commit()
-        return user
+        set_refresh_cookie(
+            response,
+            refresh_token,
+            **refresh_cookie_kwargs(
+                cookies,
+                max_age=ctx.config.jwt.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
+            ),
+        )
+        return TokenResponse(access_token=access_token)
 
     @router.post(
         "/login", response_model=TokenResponse, dependencies=[DependsLoginLimit]
