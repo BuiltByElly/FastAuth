@@ -6,6 +6,7 @@ dependency — no `strategy` flag, no `if/else` branching. Common setup
 Rate limiting is a separate component, see `fastauth.dependencies.rate_limiter`.
 """
 
+import warnings
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime
 from enum import Enum
@@ -34,7 +35,7 @@ from fastauth.schemas import (
 )
 from fastauth.security import build_hasher
 
-from .config import FastAuthConfig
+from .config import FastAuthConfig, RateLimitConfig
 
 
 class FastAuth:
@@ -63,13 +64,24 @@ class FastAuth:
             adapter: Per-request DB bridge (session or JWT flavor).
             db_session_dependency: FastAPI dep yielding an AsyncSession.
             user_model: App User (uses FastAuthUserMixin).
-            rate_limiter: Rate limiter instance (optional).
+            rate_limiter: Ready-made limiter instance. When passed it owns
+                ALL rate-limit behavior and `config.rate_limit` is ignored
+                (a warning is emitted if that section is non-default).
+                When omitted, one is built from `config.rate_limit`.
             tags: Router tags. prefix: Router prefix.
             config: Single config object; defaults to `FastAuthConfig()`.
         """
         cfg = config or FastAuthConfig()
         self.config = cfg
         self.password_hasher = build_hasher(cfg.password.hash_schemes)
+        if rate_limiter is not None and cfg.rate_limit != RateLimitConfig():
+            warnings.warn(
+                "A rate_limiter instance was passed explicitly, so the "
+                "config.rate_limit section is ignored. Configure the "
+                "RateLimiter directly instead.",
+                UserWarning,
+                stacklevel=3,
+            )
         self.rate_limiter = rate_limiter or RateLimiter(
             rate_limit_config=cfg.rate_limit
         )
@@ -121,7 +133,12 @@ class SessionAuth(FastAuth):
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
     ):
-        """Bind models + session provider; mount signup/login/logout/me."""
+        """Bind models + session provider; mount signup/login/logout/me.
+
+        Args:
+            rate_limiter: Ready-made limiter (owns behavior; `config.rate_limit`
+                is then ignored). Omit to build one from `config.rate_limit`.
+        """
         super().__init__(
             adapter=adapter,
             db_session_dependency=db_session_dependency,
@@ -161,7 +178,8 @@ class JWTAuth(FastAuth):
 
         Args:
             refresh_model: App refresh-token model (single-use rotation).
-            rate_limiter: Rate limiter instance (optional).
+            rate_limiter: Ready-made limiter (owns behavior; `config.rate_limit`
+                is then ignored). Omit to build one from `config.rate_limit`.
             config: Must include `jwt` (secret, algorithm, lifetimes).
         """
         super().__init__(

@@ -14,7 +14,9 @@ def make_request(path="/login", headers=None, client_host="1.2.3.4"):
         "type": "http",
         "method": "POST",
         "path": path,
-        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+        "headers": [
+            (k.lower().encode(), v.encode()) for k, v in (headers or {}).items()
+        ],
         "query_string": b"",
         "server": ("testserver", 80),
         "scheme": "http",
@@ -44,9 +46,11 @@ async def test_limit_for_uses_custom_rule_then_raises_429():
         rate_limit_config=RateLimitConfig(custom_rules={"/login": (60, 1)})
     )
     dep = limiter.limit_for("/login")
-    assert await dep(make_request("/login"), limiter=await limiter.dependency()) is None
+    assert (
+        await dep(make_request("/login"), limiter=await limiter._dependency()) is None
+    )
     with pytest.raises(HTTPException) as exc:
-        await dep(make_request("/login"), limiter=await limiter.dependency())
+        await dep(make_request("/login"), limiter=await limiter._dependency())
     assert exc.value.status_code == 429
 
 
@@ -55,9 +59,9 @@ async def test_limit_for_falls_back_to_globals():
         rate_limit_config=RateLimitConfig(window=60, max_requests=1, custom_rules={})
     )
     dep = limiter.limit_for("/unlisted")
-    await dep(make_request("/unlisted"), limiter=await limiter.dependency())
+    await dep(make_request("/unlisted"), limiter=await limiter._dependency())
     with pytest.raises(HTTPException) as exc:
-        await dep(make_request("/unlisted"), limiter=await limiter.dependency())
+        await dep(make_request("/unlisted"), limiter=await limiter._dependency())
     assert exc.value.status_code == 429
 
 
@@ -66,9 +70,9 @@ async def test_limit_explicit_args_override_config():
         rate_limit_config=RateLimitConfig(window=60, max_requests=100)
     )
     dep = limiter.limit(window=60, max_requests=1)
-    await dep(make_request(), limiter=await limiter.dependency())
+    await dep(make_request(), limiter=await limiter._dependency())
     with pytest.raises(HTTPException):
-        await dep(make_request(), limiter=await limiter.dependency())
+        await dep(make_request(), limiter=await limiter._dependency())
 
 
 def test_disabled_limiter_never_touches_storage():
@@ -76,7 +80,7 @@ def test_disabled_limiter_never_touches_storage():
         rate_limit_config=RateLimitConfig(enabled=False, storage="database")
     )
     # No model/adapter/dependency needed when disabled.
-    assert limiter.dependency is None
+    assert limiter._dependency is None
 
 
 async def test_disabled_dependencies_are_noops():

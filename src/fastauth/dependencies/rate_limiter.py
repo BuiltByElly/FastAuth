@@ -26,7 +26,8 @@ DependencyFn = Callable[..., Awaitable[None]]
 class RateLimiter:
     """Fixed-window rate limiter (IP + path key) with pluggable storage.
 
-    Built by `FastAuth` from config; applied to auth routes automatically.
+    Built by `FastAuth` from config, or by hand and passed in — a passed
+    instance always wins over `config.rate_limit`.
     """
 
     def __init__(
