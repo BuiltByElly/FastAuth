@@ -1,18 +1,5 @@
 """FastAuth: simple flexible auth for FastAPI."""
 
-from .adapters.sqlalchemy import (
-    SQLAlchemyAdapter,
-    SQLAlchemyJWTAdapter,
-    SQLAlchemySessionAdapter,
-)
-from .core import FastAuth
-from .models import FastAuthSessionMixin, FastAuthUserMixin
+from .core import FastAuth, JWTAuth, SessionAuth
 
-__all__ = [
-    "FastAuth",
-    "FastAuthSessionMixin",
-    "FastAuthUserMixin",
-    "SQLAlchemyAdapter",
-    "SQLAlchemyJWTAdapter",
-    "SQLAlchemySessionAdapter",
-]
+__all__ = ["FastAuth", "JWTAuth", "SessionAuth"]

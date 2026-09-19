@@ -7,14 +7,18 @@ from fastapi import FastAPI
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from fastauth import SessionAuth
-from fastauth.adapters import SQLAlchemySessionAdapter
-from fastauth.config import (
-    CookieConfig,
-    FastAuthConfig,
-    PasswordConfig,
+from fastauth import (
+    JWTAuth,
 )
-from fastauth.models import FastAuthSessionMixin, FastAuthUserMixin
+from fastauth.adapters import SQLAlchemyJWTAdapter
+from fastauth.adapters.rate_limit import SQLAlchemyRateLimiter
+from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
+from fastauth.dependencies.rate_limiter import RateLimiter
+from fastauth.models import (
+    FastAuthRateLimitMixin,
+    FastAuthRefreshTokenMixin,
+    FastAuthUserMixin,
+)
 
 from .database import engine, get_db
 
@@ -38,12 +42,18 @@ class User(Base, FastAuthUserMixin):
     )  # both default False — invisible in and out
 
 
-class Session(Base, FastAuthSessionMixin):
-    """App session table linked to User."""
+class RefreshToken(Base, FastAuthRefreshTokenMixin):
+    """App refresh token table linked to User."""
 
-    __tablename__ = "sessions"
+    __tablename__ = "refresh_tokens"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+
+
+class RateLimitModel(Base, FastAuthRateLimitMixin):
+    """App rate limit model."""
+
+    __tablename__ = "rate_limits"
 
 
 @asynccontextmanager
@@ -57,17 +67,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-auth = SessionAuth(
-    adapter=SQLAlchemySessionAdapter,
+rate_limiter = RateLimiter(
+    rate_limit_model=RateLimitModel,
+    rate_limiter_adapter=SQLAlchemyRateLimiter,
+    db_session_dependency=get_db,
+    rate_limit_config=RateLimitConfig(storage="database"),
+)
+
+auth = JWTAuth(
+    adapter=SQLAlchemyJWTAdapter,
     user_model=User,
-    session_model=Session,
+    refresh_model=RefreshToken,
     config=FastAuthConfig(
-        cookies=CookieConfig(session_cookie_name="sessioning"),
-        password=PasswordConfig(
-            hash_schemes=["bcrypt"],
-        ),
+        jwt=JWTConfig(secret_key="gt0tl4mZRz/XQ7+i96tPYh1XHg8U7FiU62a9QJG3n6s="),
+        cookies=CookieConfig(refresh_cookie_name="refreshing"),
+        rate_limit=RateLimitConfig(storage="database"),
     ),
     db_session_dependency=get_db,
+    rate_limiter=rate_limiter,
 )
 
 app.include_router(auth.router)
