@@ -3,7 +3,7 @@
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -71,3 +71,17 @@ auth = SessionAuth(
 )
 
 app.include_router(auth.router)
+
+
+@auth.on_before_signup
+async def normalize_email(payload, request: Request):
+    payload.email = payload.email.upper()
+    print("payload", payload)
+    return payload
+
+
+@auth.on_before_signup
+async def captcha(payload, request: Request):
+    payload.bio = "73978"
+    print("payload", payload)
+    return payload

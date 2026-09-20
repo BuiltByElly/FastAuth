@@ -3,7 +3,10 @@
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, create_model
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr, Field, SecretStr, create_model
+from starlette.requests import Request
 
 from fastauth.config import PasswordConfig
 
@@ -12,14 +15,14 @@ class SignupBase(BaseModel):
     """Core fields every signup requires, regardless of dev extras."""
 
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: SecretStr = Field(min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
     """Static: login never takes extra fields."""
 
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: SecretStr = Field(min_length=8, max_length=128)
 
 
 class UserResponseBase(BaseModel):
@@ -61,7 +64,7 @@ def build_signup_schema(
         "SignupBase",
         __base__=BaseModel,
         email=(EmailStr, ...),
-        password=(str, _password_field(password_config)),
+        password=(SecretStr, _password_field(password_config)),
     )
     return create_model("SignupRequest", __base__=dyn_base, **extra_fields)  # type: ignore[call-overload]
 
@@ -76,7 +79,7 @@ def build_login_schema(
         "LoginRequest",
         __base__=BaseModel,
         email=(EmailStr, ...),
-        password=(str, _password_field(password_config)),
+        password=(SecretStr, _password_field(password_config)),
     )
 
 

@@ -47,8 +47,12 @@ def register_jwt_routes(
         payload: SignupRequest,  # type: ignore[valid-type]
         session: Annotated[AsyncSession, DependsSession],
         response: Response,
+        request: Request,
     ):
         """Create a user unless the email is taken."""
+        # Before signup, run the `run_before_signup` hook -> validated payload
+        payload = await ctx.signup_hooks["run_before_signup"](payload, request)
+
         adapter = ctx.build_adapter(session)
         if await adapter.get_user_by_email(payload.email):  # type: ignore[attr-defined]
             raise HTTPException(status_code=400, detail="Email already registered.")

@@ -16,11 +16,11 @@ from fastapi import APIRouter
 from sqlalchemy import delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastauth.adapters.adapters import Adapter, RateLimiterAdapter
+from fastauth.adapters.adapters import Adapter
 from fastauth.dependencies.current_user import jwt_current_user, session_current_user
 from fastauth.dependencies.rate_limiter import RateLimiter
+from fastauth.hooks.signup import SignUpHooks
 from fastauth.models import (
-    FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
     FastAuthUserMixin,
@@ -95,6 +95,13 @@ class FastAuth:
             adapter.get_response_fields(user_model)
         )
 
+        self.signup_hooks = SignUpHooks(
+            request_schema=self.signup_schema, response_schema=self.user_response_schema
+        )
+        self.on_before_signup = (
+            self.signup_hooks.on_before_signup
+        )  # enables @auth.on_before_signup
+
         self.ctx = AuthContext(
             adapter_class=adapter,
             user_model=user_model,
@@ -108,6 +115,7 @@ class FastAuth:
             password_hasher=self.password_hasher,
             refresh_model=None,
             rate_limiter=self.rate_limiter,
+            signup_hooks={"run_before_signup": self.signup_hooks.run_before_signup},
         )
         tags = tags or ["Authentication"]
         self.router = APIRouter(prefix=prefix, tags=tags)

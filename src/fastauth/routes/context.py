@@ -1,9 +1,10 @@
 """Shared route context: what strategy modules need from FastAuth."""
 
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from fastapi import Request
 from pwdlib import PasswordHash
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,7 @@ class AuthContext:
     strategy: Literal["session", "jwt"]
     config: FastAuthConfig
     rate_limiter: RateLimiter
+    signup_hooks: dict[str, Callable[[BaseModel, Request], Awaitable[BaseModel]]]
     password_hasher: PasswordHash | None = None
     refresh_model: type[FastAuthRefreshTokenMixin] | None = None
 

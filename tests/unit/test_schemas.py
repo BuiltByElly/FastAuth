@@ -18,7 +18,12 @@ def test_default_password_policy_is_8_to_128():
         SignupBase(email="a@example.com", password="short")
     with pytest.raises(ValidationError):
         LoginRequest(email="a@example.com", password="x" * 129)
-    assert SignupBase(email="a@example.com", password="long-enough").password == "long-enough"
+    assert (
+        SignupBase(
+            email="a@example.com", password="long-enough"
+        ).password.get_secret_value()
+        == "long-enough"
+    )
 
 
 def test_custom_password_policy_flows_through_builders():
@@ -29,7 +34,12 @@ def test_custom_password_policy_flows_through_builders():
         signup(email="a@example.com", password="only-eight")
     with pytest.raises(ValidationError):
         login(email="a@example.com", password="only-eight")
-    assert login(email="a@example.com", password="twelve-chars!").password == "twelve-chars!"
+    assert (
+        login(
+            email="a@example.com", password="twelve-chars!"
+        ).password.get_secret_value()
+        == "twelve-chars!"
+    )
 
 
 def test_login_builder_defaults_to_static_schema():
