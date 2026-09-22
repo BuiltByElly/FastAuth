@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, Field, SecretStr, create_model
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, create_model
 from starlette.requests import Request
 
 from fastauth.config import PasswordConfig
@@ -27,6 +27,8 @@ class LoginRequest(BaseModel):
 
 class UserResponseBase(BaseModel):
     """Core fields every user response returns, regardless of dev extras."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     email: EmailStr

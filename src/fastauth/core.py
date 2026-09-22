@@ -19,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastauth.adapters.adapters import Adapter
 from fastauth.dependencies.current_user import jwt_current_user, session_current_user
 from fastauth.dependencies.rate_limiter import RateLimiter
-from fastauth.hooks.signup import SignUpHooks
+from fastauth.hooks.login import LoginHooks
+from fastauth.hooks.logout import LogoutHooks
+from fastauth.hooks.signup import SignupHooks
 from fastauth.models import (
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
@@ -95,12 +97,22 @@ class FastAuth:
             adapter.get_response_fields(user_model)
         )
 
-        self.signup_hooks = SignUpHooks(
-            request_schema=self.signup_schema, response_schema=self.user_response_schema
+        self.signup_hooks = SignupHooks(
+            schema=self.signup_schema,
         )
-        self.on_before_signup = (
-            self.signup_hooks.on_before_signup
-        )  # enables @auth.on_before_signup
+        self.on_before_signup = self.signup_hooks.on_before_signup
+        self.on_after_signup = self.signup_hooks.on_after_signup
+        self.on_signup_failure = self.signup_hooks.on_signup_failure
+
+        self.login_hooks = LoginHooks(
+            schema=self.login_schema,
+        )
+        self.on_before_login = self.login_hooks.on_before_login
+        self.on_login_failure = self.login_hooks.on_login_failure
+        self.on_after_login = self.login_hooks.on_after_login
+
+        self.logout_hooks = LogoutHooks()
+        self.on_after_logout = self.logout_hooks.add_after_logout
 
         self.ctx = AuthContext(
             adapter_class=adapter,
@@ -115,7 +127,19 @@ class FastAuth:
             password_hasher=self.password_hasher,
             refresh_model=None,
             rate_limiter=self.rate_limiter,
-            signup_hooks={"run_before_signup": self.signup_hooks.run_before_signup},
+            signup_hooks={
+                "run_before_signup": self.signup_hooks.run_before_signup,
+                "run_after_signup": self.signup_hooks.run_after_signup,
+                "run_signup_failure": self.signup_hooks.run_signup_failure,
+            },
+            login_hooks={
+                "run_before_login": self.login_hooks.run_before_login,
+                "run_login_failure": self.login_hooks.run_login_failure,
+                "run_after_login": self.login_hooks.run_after_login,
+            },
+            logout_hooks={
+                "run_after_logout": self.logout_hooks.run_after_logout,
+            },
         )
         tags = tags or ["Authentication"]
         self.router = APIRouter(prefix=prefix, tags=tags)

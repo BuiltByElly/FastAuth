@@ -9,29 +9,37 @@ from fastauth.hooks.exceptions import HookAbort
 logger = logging.getLogger("fastauth")
 
 SignupHandler = Callable[[BaseModel, Request], Awaitable[BaseModel]]
+SignupSuccessHandler = Callable[[BaseModel, Request], Awaitable[None]]
+SignupFailureHandler = Callable[[str, Request], Awaitable[None]]
 
 
-class SignUpHooks:
+class SignupHooks:
     """Holds and runs the handlers attached to the signup hooks.
 
     Developers attach handlers with ``on_before_signup``. The signup route then
     calls ``run_before_signup`` to run them in order.
 
     Args:
-        request_schema: The signup request model built at startup. Handlers
+        schema: The signup request model built at startup. Handlers
             receive instances of it, and every result is re-validated against it.
-        response_schema: The signup response model, reserved for the future
-            ``after`` hooks. Not used yet.
     """
 
-    def __init__(
-        self, request_schema: type[BaseModel], response_schema: type[BaseModel]
-    ):
+    def __init__(self, schema: type[BaseModel]):
         self._before_signup: list[
             SignupHandler
         ] = []  # List of handlers to run before signup
-        self._request_schema = request_schema  # Schema for the signup request payload (used for _before hooks)
-        self._response_schema = response_schema  # Schema for the signup response payload (used for _after hooks)
+
+        self._after_signup: list[
+            SignupSuccessHandler
+        ] = []  # List of handlers to run after signup
+
+        self._signup_failure: list[
+            SignupFailureHandler
+        ] = []  # List of handlers to run after signup fails
+
+        self._schema = (
+            schema  # Schema for the signup request payload (used for _before hooks)
+        )
 
     def on_before_signup(self, fn: SignupHandler) -> SignupHandler:
         """Register a handler that runs before a user is created.
@@ -51,6 +59,36 @@ class SignUpHooks:
         self._before_signup.append(fn)
         return fn  # returning fn makes it work as a decorator
 
+    def on_after_signup(self, fn: SignupSuccessHandler) -> SignupSuccessHandler:
+        """Register an observer that runs after a successful signup.
+
+        Receives a ``User`` (an instance of the response schema) and the ``Request``, and returns nothing.
+        It cannot change the response. Exceptions are logged to the ``fastauth`` logger and ignored.
+
+        Args:
+            fn: An async function ``(user: type[BaseModel], request: Request) -> None``.
+
+        Returns:
+            ``fn`` unchanged, so decorator use keeps the original function.
+        """
+        self._after_signup.append(fn)
+        return fn  # returning fn makes it work as a decorator
+
+    def on_signup_failure(self, fn: SignupFailureHandler) -> SignupFailureHandler:
+        """Register an observer that runs after a failed signup.
+
+        Receives an error message and the ``Request``, and returns nothing.
+        It cannot change the response. Exceptions are logged to the ``fastauth`` logger and ignored.
+
+        Args:
+            fn: An async function ``(error: str, request: Request) -> None``.
+
+        Returns:
+            ``fn`` unchanged, so decorator use keeps the original function.
+        """
+        self._signup_failure.append(fn)
+        return fn  # returning fn makes it work as a decorator
+
     async def run_before_signup(self, payload: BaseModel, request: Request):
         """Run every ``on_before_signup`` handler in order.
 
@@ -65,10 +103,6 @@ class SignUpHooks:
 
         Returns:
             The payload after all handlers have run.
-
-        Raises:
-            HookAbort: A handler intentionally blocked the signup.
-            HTTPException: 500, if a handler crashed or returned the wrong type.
         """
         for fn in self._before_signup:
             try:
@@ -77,17 +111,51 @@ class SignUpHooks:
                 raise  # intentional block, pass through
             except Exception:
                 logger.exception(
-                    "HOOK_ERROR: on_before_signup handler `%s` crashed", fn.__name__
+                    "HOOK_ERROR: `on_before_signup`'s handler `%s` crashed", fn.__name__
                 )
                 raise HTTPException(500, "Internal error")
-            if not isinstance(result, self._request_schema):
+            if not isinstance(result, self._schema):
                 logger.error(
-                    "HOOK_ERROR: handler `%s` must return a value of type `%s`",
+                    "HOOK_ERROR: `on_before_signup`'s handler `%s` must return a value of type `%s`",
                     fn.__name__,
-                    self._request_schema.__name__,
+                    self._schema.__name__,
                 )
                 raise HTTPException(500, "Internal error")
-            payload = self._request_schema.model_validate(
+            payload = self._schema.model_validate(
                 result.model_dump()
             )  # the next handler sees the updated payload
         return payload
+
+    async def run_after_signup(self, user: BaseModel, request: Request):
+        """Run every ``on_after_signup`` handler in order. Never raises.
+
+        Args:
+            user: The user object. Validated with UserResponse.
+            request: The incoming FastAPI request. Handlers should treat it as
+                read-only.
+        """
+        for fn in self._after_signup:
+            try:
+                await fn(user, request)
+
+            except Exception:
+                logger.exception(
+                    "HOOK_ERROR: `on_after_signup`'s handler `%s` crashed", fn.__name__
+                )
+
+    async def run_signup_failure(self, error: str, request: Request):
+        """Run every ``on_signup_failure`` handler in order. Never raises.
+
+        Args:
+            error: The error message.
+            request: The incoming FastAPI request. Handlers should treat it as
+                read-only.
+        """
+        for fn in self._signup_failure:
+            try:
+                await fn(error, request)
+            except Exception:
+                logger.exception(
+                    "HOOK_ERROR: `on_signup_failure`'s handler `%s` crashed",
+                    fn.__name__,
+                )

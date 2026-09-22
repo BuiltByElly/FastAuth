@@ -14,6 +14,8 @@ from fastauth.config import (
     FastAuthConfig,
     PasswordConfig,
 )
+from fastauth.hooks.exceptions import HookAbort
+from fastauth.hooks.login import LoginFailure
 from fastauth.models import FastAuthSessionMixin, FastAuthUserMixin
 
 from .database import engine, get_db
@@ -71,17 +73,44 @@ auth = SessionAuth(
 )
 
 app.include_router(auth.router)
+# auth.
 
 
 @auth.on_before_signup
 async def normalize_email(payload, request: Request):
     payload.email = payload.email.upper()
-    print("payload", payload)
+    print("payload on_before_signup", payload)
     return payload
 
 
-@auth.on_before_signup
-async def captcha(payload, request: Request):
-    payload.bio = "73978"
-    print("payload", payload)
+@auth.on_signup_failure
+async def _(err: str, request: Request):
+    print("signup failure", err)
+
+
+@auth.on_after_signup
+async def _(user, request: Request):
+    print("user signed up", user)
+
+
+@auth.on_before_login
+async def blocking_ip(payload, request: Request):
+    payload.email = payload.email.upper()
+    if request.client is not None and request.client.host != "127.0.0.1":
+        raise HookAbort(status_code=403, detail="Your IP is blocked skii")
     return payload
+
+
+@auth.on_login_failure
+async def _(failure: LoginFailure, request: Request):
+    print("login failure", failure)
+
+
+@auth.on_after_login
+async def _(user, request: Request):
+    print("user logged in", user)
+
+
+@auth.on_after_logout
+async def _(user):
+    print("user logged out", user)

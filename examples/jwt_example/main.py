@@ -3,7 +3,7 @@
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -14,6 +14,8 @@ from fastauth.adapters import SQLAlchemyJWTAdapter
 from fastauth.adapters.rate_limit import SQLAlchemyRateLimiter
 from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
 from fastauth.dependencies.rate_limiter import RateLimiter
+from fastauth.hooks.exceptions import HookAbort
+from fastauth.hooks.login import LoginFailure
 from fastauth.models import (
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
@@ -88,3 +90,33 @@ auth = JWTAuth(
 )
 
 app.include_router(auth.router)
+
+
+@auth.on_before_signup
+async def normalize_email(payload, request: Request):
+    payload.email = payload.email.upper()
+    print("payload on_before_signup", payload)
+    return payload
+
+
+@auth.on_before_login
+async def blocking_ip(payload, request: Request):
+    payload.email = payload.email.upper()
+    if request.client is not None and request.client.host != "127.0.0.1":
+        raise HookAbort(status_code=403, detail="Your IP is blocked skii")
+    return payload
+
+
+@auth.on_login_failure
+async def _(failure: LoginFailure, request: Request):
+    print("login failure", failure)
+
+
+@auth.on_after_login
+async def _(user, request: Request):
+    print("user logged in", user)
+
+
+@auth.on_after_logout
+async def _(user: res):
+    print("user logged out", user)
