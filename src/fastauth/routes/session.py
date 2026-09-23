@@ -126,7 +126,9 @@ def register_session_routes(
         if not verify_password(payload.password, user.hashed_password, hasher):
             bg_tasks.add_task(
                 ctx.login_hooks["run_login_failure"],
-                LoginFailure(user_id=str(user.id), error="Invalid credentials."),
+                # user_id stays None even though the account exists: failure
+                # observers must not become an account-enumeration oracle.
+                LoginFailure(user_id=None, error="Invalid credentials."),
                 request,
             )
             return JSONResponse(
