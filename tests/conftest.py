@@ -18,14 +18,15 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import JWTAuth, SessionAuth
-from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
-from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
-from fastauth.models import (
+from fastauth.adapters.sqlalchemy.jwt_adapter import SQLAlchemyJWTAdapter
+from fastauth.adapters.sqlalchemy.models import (
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
     FastAuthUserMixin,
 )
+from fastauth.adapters.sqlalchemy.session_adapter import SQLAlchemySessionAdapter
+from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
 
 TEST_SECRET = "0123456789abcdef" * 3  # 48 chars, not a placeholder
 

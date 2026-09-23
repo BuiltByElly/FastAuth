@@ -8,13 +8,10 @@ Rate limiting is a separate component, see `fastauth.dependencies.rate_limiter`.
 
 import warnings
 from collections.abc import AsyncGenerator, Callable
-from datetime import UTC, datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter
-from sqlalchemy import delete, or_
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
 from fastauth.dependencies.current_user import jwt_current_user, session_current_user
@@ -23,11 +20,7 @@ from fastauth.hooks.login import LoginHooks
 from fastauth.hooks.logout import LogoutHooks
 from fastauth.hooks.refresh import RefreshHooks
 from fastauth.hooks.signup import SignupHooks
-from fastauth.models import (
-    FastAuthRefreshTokenMixin,
-    FastAuthSessionMixin,
-    FastAuthUserMixin,
-)
+from fastauth.protocols import RefreshTokenProtocol, SessionProtocol, UserProtocol
 from fastauth.routes.context import AuthContext
 from fastauth.routes.jwt_route import register_jwt_routes
 from fastauth.routes.session import register_session_routes
@@ -54,8 +47,8 @@ class FastAuth:
     def __init__(
         self,
         adapter: type[Adapter],
-        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
-        user_model: type[FastAuthUserMixin],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserProtocol],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -65,8 +58,8 @@ class FastAuth:
 
         Args:
             adapter: Per-request DB bridge (session or JWT flavor).
-            db_session_dependency: FastAPI dep yielding an AsyncSession.
-            user_model: App User (uses FastAuthUserMixin).
+            db_session_dependency: FastAPI dep yielding a per-request DB handle.
+            user_model: App User (satisfies UserProtocol).
             rate_limiter: Ready-made limiter instance. When passed it owns
                 ALL rate-limit behavior and `config.rate_limit` is ignored
                 (a warning is emitted if that section is non-default).
@@ -164,9 +157,9 @@ class SessionAuth(FastAuth):
     def __init__(
         self,
         adapter: type[Adapter],
-        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
-        user_model: type[FastAuthUserMixin],
-        session_model: type[FastAuthSessionMixin],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserProtocol],
+        session_model: type[SessionProtocol],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -205,9 +198,9 @@ class JWTAuth(FastAuth):
     def __init__(
         self,
         adapter: type[Adapter],
-        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
-        user_model: type[FastAuthUserMixin],
-        refresh_model: type[FastAuthRefreshTokenMixin],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserProtocol],
+        refresh_model: type[RefreshTokenProtocol],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -238,14 +231,12 @@ class JWTAuth(FastAuth):
         self.current_user = jwt_current_user(self.ctx)
         register_jwt_routes(self.router, self.ctx, self.current_user)
 
-    async def purge_expired_refresh_tokens(self, session: AsyncSession) -> int:
+    async def purge_expired_refresh_tokens(self, session: Any) -> int:
         """Delete expired refresh-token rows; returns the deleted count.
 
-        Expired rows are useless even for reuse detection (their JWTs fail
-        the `exp` check before the row is ever read), so this only removes
-        garbage. Outstanding and consumed-but-unexpired rows are kept.
-
-        Flushes; the caller commits. Designed for a scheduler job, e.g.::
+        Delegates to the adapter (which owns all storage access), so this
+        stays ORM-agnostic. Flushes; the caller commits. Designed for a
+        scheduler job, e.g.::
 
             async def purge_job() -> None:
                 async with session_factory() as session:
@@ -253,13 +244,4 @@ class JWTAuth(FastAuth):
                     await session.commit()
                     logger.info("purged %d refresh tokens", deleted)
         """
-        result = await session.execute(
-            delete(self.refresh_model).where(
-                or_(
-                    self.refresh_model.expires_at.is_(None),  # type: ignore[attr-defined]
-                    self.refresh_model.expires_at <= datetime.now(UTC),  # type: ignore[attr-defined]
-                )
-            )
-        )
-        await session.flush()
-        return result.rowcount  # type: ignore[attr-defined]
+        return await self.ctx.build_adapter(session).purge_expired_refresh_tokens()

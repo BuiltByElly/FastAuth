@@ -10,15 +10,14 @@ the dev-picked ORM adapter per request. Disabled → no-ops, nothing raises.
 """
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import RateLimiterAdapter
 from fastauth.adapters.rate_limit.memory import InMemoryRateLimiter
 from fastauth.config import RateLimitConfig
-from fastauth.models import FastAuthRateLimitMixin
+from fastauth.protocols import RateLimitProtocol
 
 DependencyFn = Callable[..., Awaitable[None]]
 
@@ -33,8 +32,8 @@ class RateLimiter:
     def __init__(
         self,
         rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
-        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]] | None = None,
-        rate_limit_model: type[FastAuthRateLimitMixin] | None = None,
+        db_session_dependency: Callable[[], AsyncGenerator[Any]] | None = None,
+        rate_limit_model: type[RateLimitProtocol] | None = None,
         rate_limit_config: RateLimitConfig | None = None,
     ):
         """Bind storage backend once; lives for the app lifetime.
@@ -62,7 +61,7 @@ class RateLimiter:
         elif self._config.storage == "database":
             if rate_limit_model is None:
                 raise ValueError(
-                    "storage='database' requires a rate_limit_model (inherit FastAuthRateLimitMixin)."
+                    "storage='database' requires a rate_limit_model."
                 )
             if db_session_dependency is None:
                 raise ValueError("storage='database' requires a db_session_dependency.")
@@ -70,7 +69,7 @@ class RateLimiter:
                 raise ValueError("storage='database' requires a rate_limiter_adapter.")
 
             async def _provide_db(
-                db_session: Annotated[AsyncSession, Depends(db_session_dependency)],
+                db_session: Annotated[Any, Depends(db_session_dependency)],
             ) -> RateLimiterAdapter:
                 return rate_limiter_adapter(
                     db_session=db_session, model=rate_limit_model

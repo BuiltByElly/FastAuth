@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import jwt as pyjwt
 import pytest
 
-from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
+from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
 from fastauth.config import JWTConfig
 from tests.conftest import (
     TEST_SECRET,

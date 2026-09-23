@@ -13,7 +13,6 @@ from fastapi import (
     Response,
 )
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.cookies import (
     clear_cookie_kwargs,
@@ -22,7 +21,7 @@ from fastauth.cookies import (
     set_session_cookie,
 )
 from fastauth.hooks.login import LoginFailure
-from fastauth.models import FastAuthUserMixin
+from fastauth.protocols import UserProtocol
 from fastauth.routes.context import AuthContext
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 
@@ -30,7 +29,7 @@ from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 def register_session_routes(
     router: APIRouter,
     ctx: AuthContext,
-    current_user: Callable[..., Awaitable[FastAuthUserMixin]],
+    current_user: Callable[..., Awaitable[UserProtocol]],
 ) -> None:
     """Mount signup/login/logout/me using session rows vía the adapter."""
     SignupRequest = ctx.signup_schema
@@ -48,7 +47,7 @@ def register_session_routes(
     )
     async def signup(
         payload: SignupRequest,  # type: ignore[valid-type]
-        db_session: Annotated[AsyncSession, DependsSession],
+        db_session: Annotated[Any, DependsSession],
         response: Response,
         request: Request,
         bg_tasks: BackgroundTasks,
@@ -98,7 +97,7 @@ def register_session_routes(
         payload: LoginRequest,  # type: ignore[valid-type]
         response: Response,
         request: Request,
-        db_session: Annotated[AsyncSession, DependsSession],
+        db_session: Annotated[Any, DependsSession],
         bg_tasks: BackgroundTasks,
     ):
         """Verify credentials, rotate any existing session, issue a new one."""
@@ -173,7 +172,7 @@ def register_session_routes(
     async def logout(
         response: Response,
         request: Request,
-        db_session: Annotated[AsyncSession, DependsSession],
+        db_session: Annotated[Any, DependsSession],
         bg_tasks: BackgroundTasks,
     ):
         """Revoke the cookie (or bearer) session id and clear the cookie."""
@@ -192,7 +191,7 @@ def register_session_routes(
 
     @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
     async def me(
-        current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
+        current_user: Annotated[UserProtocol, Depends(current_user)],
     ):
         """Return the user behind the cookie (or bearer) session id."""
         return current_user

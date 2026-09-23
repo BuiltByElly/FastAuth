@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from fastauth import JWTAuth, SessionAuth
-from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
+from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
 from tests.conftest import ExtraUser, RefreshToken, Session
 
 

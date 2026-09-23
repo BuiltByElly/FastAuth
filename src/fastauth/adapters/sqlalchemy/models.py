@@ -16,6 +16,7 @@ from datetime import datetime
 from pydantic import EmailStr
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
+from uuid6 import uuid7
 
 
 class FastAuthUserMixin:
@@ -35,7 +36,7 @@ class FastAuthUserMixin:
     Example:
     ```python
     from sqlalchemy.orm import DeclarativeBase
-    from fastauth.models import FastAuthUserMixin
+    from fastauth.adapters.sqlalchemy.models import FastAuthUserMixin
 
     class Base(DeclarativeBase):
         pass
@@ -48,7 +49,7 @@ class FastAuthUserMixin:
     ```
     """
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     email: Mapped[EmailStr] = mapped_column(String, unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -74,7 +75,7 @@ class FastAuthSessionMixin:
     import uuid
     from sqlalchemy import ForeignKey
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-    from fastauth.models import FastAuthSessionMixin
+    from fastauth.adapters.sqlalchemy.models import FastAuthSessionMixin
 
     class Base(DeclarativeBase):
         pass
@@ -122,7 +123,7 @@ class FastAuthRefreshTokenMixin:
     import uuid
     from sqlalchemy import ForeignKey
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-    from fastauth.models import FastAuthRefreshTokenMixin
+    from fastauth.adapters.sqlalchemy.models import FastAuthRefreshTokenMixin
 
     class Base(DeclarativeBase):
         pass
@@ -155,3 +156,38 @@ class FastAuthRateLimitMixin:
     key: Mapped[str] = mapped_column(primary_key=True)
     count: Mapped[int] = mapped_column(default=0)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FastAuthPasswordResetTokensMixin:
+    """Adds the required FastAuth columns to a `password_reset_tokens` model.
+
+    Inherit from this mixin (plus your declarative `Base`) in your own
+    `password_reset_tokens` model. It does not define `__tablename__` and the necessary foreign key — you do.
+
+    Attributes:
+        id: Primary key, auto-generated `uuid.uuid7` (time-ordered UUID).
+        user_id: Foreign key to the `users` table.
+        token_hash: Argon2 (or other) password hash. Never store
+            plaintext here — FastAuth hashes on register/login.
+        expires_at: Timestamp when the token expires.
+        used_at: Timestamp when the token was used, if applicable.
+
+    Example:
+    ```python
+    from sqlalchemy.orm import DeclarativeBase
+    from fastauth.adapters.sqlalchemy.models import FastAuthPasswordResetTokensMixin
+
+    class Base(DeclarativeBase):
+        pass
+
+    class PasswordResetToken(Base, FastAuthPasswordResetTokensMixin):
+        __tablename__ = "password_reset_tokens"
+
+        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    ```
+    """
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str]
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None] = mapped_column(default=None)

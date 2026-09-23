@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from fastauth.adapters import SQLAlchemySessionAdapter
+from fastauth.adapters.sqlalchemy import SQLAlchemySessionAdapter
 from fastauth.security import verify_password
 from tests.conftest import Session, User, build_jwt_app
 

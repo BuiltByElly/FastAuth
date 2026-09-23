@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from fastauth import JWTAuth, SessionAuth
-from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
+from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
 from fastauth.hooks.exceptions import HookAbort
 from fastauth.hooks.login import LoginFailure
 from tests.conftest import ExtraUser, RefreshToken, Session

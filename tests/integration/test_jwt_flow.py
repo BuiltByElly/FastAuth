@@ -216,7 +216,7 @@ async def test_purge_keeps_outstanding_rows(auth, session_factory, client):
 
 def test_jwt_requires_config(get_db):
     from fastauth import JWTAuth
-    from fastauth.adapters import SQLAlchemyJWTAdapter
+    from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter
     from tests.conftest import RefreshToken, User
 
     with pytest.raises(ValueError, match="config.jwt"):

@@ -4,22 +4,21 @@ from abc import ABC, abstractmethod
 from typing import Any, TypeVar
 
 from pwdlib import PasswordHash
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.config import JWTConfig
-from fastauth.models import (
-    FastAuthRateLimitMixin,
-    FastAuthRefreshTokenMixin,
-    FastAuthSessionMixin,
-    FastAuthUserMixin,
+from fastauth.protocols import (
+    RateLimitProtocol,
+    RefreshTokenProtocol,
+    SessionProtocol,
+    UserProtocol,
 )
 
-UserT = TypeVar("UserT", bound=FastAuthUserMixin)
-SessionT = TypeVar("SessionT", bound=FastAuthSessionMixin)
-RateLimitT = TypeVar("RateLimitT", bound=FastAuthRateLimitMixin)
+UserT = TypeVar("UserT", bound=UserProtocol)
+SessionT = TypeVar("SessionT", bound=SessionProtocol)
+RateLimitT = TypeVar("RateLimitT", bound=RateLimitProtocol)
 
 
-class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
+class Adapter[UserT: UserProtocol, SessionT: SessionProtocol](ABC):
     """Abstract base class for the JWT and Sessions strategy ORM adapters. Wraps one request-scoped session.
 
     Subclasses share method names; session vs JWT differ internally.
@@ -31,15 +30,20 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
 
     def __init__(
         self,
-        db_session: AsyncSession,
+        db_session: Any,
         user_model: type[UserT],
         session_model: type[SessionT] | None = None,
         jwt_config: JWTConfig | None = None,
-        refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
+        refresh_model: type[RefreshTokenProtocol] | None = None,
         session_expire_days: int = 7,
         password_hasher: PasswordHash | None = None,
     ):
-        """Store the request-scoped session plus app models (no commit here)."""
+        """Store the request-scoped session plus app models (no commit here).
+
+        ``db_session`` is intentionally opaque: each backend defines what a
+        "session" is (e.g. SQLAlchemy's ``AsyncSession``). It is only ever
+        passed back into the backend's own adapter methods.
+        """
         self.db_session = db_session
         self.user_model: type[UserT] = user_model
         self.session_model: type[SessionT] | None = session_model
@@ -105,9 +109,18 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
         """Delete a refresh token row if present and return the user's id for on_after_logout hook; never raises."""
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
+    async def purge_expired_refresh_tokens(self) -> int:
+        """Delete expired refresh-token rows; returns the deleted count.
 
-class RateLimiterAdapter[RateLimitT: FastAuthRateLimitMixin](ABC):
-    def __init__(self, db_session: AsyncSession, model: type[RateLimitT]):
+        Expired rows are useless even for reuse detection (their JWTs fail
+        the `exp` check before the row is ever read). Flushes; the caller
+        commits. Designed for a scheduler job.
+        """
+        raise NotImplementedError("This strategy does not support refresh tokens.")
+
+
+class RateLimiterAdapter[RateLimitT: RateLimitProtocol](ABC):
+    def __init__(self, db_session: Any, model: type[RateLimitT]):
         self.db_session = db_session
         self.model = model
 

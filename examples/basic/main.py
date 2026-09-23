@@ -8,7 +8,8 @@ from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import SessionAuth
-from fastauth.adapters import SQLAlchemySessionAdapter
+from fastauth.adapters.sqlalchemy import SQLAlchemySessionAdapter
+from fastauth.adapters.sqlalchemy.models import FastAuthSessionMixin, FastAuthUserMixin
 from fastauth.config import (
     CookieConfig,
     FastAuthConfig,
@@ -16,7 +17,6 @@ from fastauth.config import (
 )
 from fastauth.hooks.exceptions import HookAbort
 from fastauth.hooks.login import LoginFailure
-from fastauth.models import FastAuthSessionMixin, FastAuthUserMixin
 
 from .database import engine, get_db
 

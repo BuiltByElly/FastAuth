@@ -10,17 +10,17 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from fastauth import (
     JWTAuth,
 )
-from fastauth.adapters import SQLAlchemyJWTAdapter
 from fastauth.adapters.rate_limit import SQLAlchemyRateLimiter
-from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
-from fastauth.dependencies.rate_limiter import RateLimiter
-from fastauth.hooks.exceptions import HookAbort
-from fastauth.hooks.login import LoginFailure
-from fastauth.models import (
+from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter
+from fastauth.adapters.sqlalchemy.models import (
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
     FastAuthUserMixin,
 )
+from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
+from fastauth.dependencies.rate_limiter import RateLimiter
+from fastauth.hooks.exceptions import HookAbort
+from fastauth.hooks.login import LoginFailure
 
 from .database import engine, get_db
 

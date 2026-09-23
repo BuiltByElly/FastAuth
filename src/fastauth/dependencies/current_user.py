@@ -8,14 +8,13 @@ directly. Use as `Depends(auth.current_user)` in your own routes.
 """
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # from fastauth.cookies import REFRESH_COOKIE_NAME
-from fastauth.models import FastAuthUserMixin
+from fastauth.protocols import UserProtocol
 from fastauth.routes.context import AuthContext
 
 # Shared bearer scheme (auto_error=False so we raise 401, not 403).
@@ -24,13 +23,13 @@ security = HTTPBearer(auto_error=False)
 
 def session_current_user(
     ctx: AuthContext,
-) -> Callable[..., Awaitable[FastAuthUserMixin]]:
+) -> Callable[..., Awaitable[UserProtocol]]:
     """Build a dependency resolving the user from the session cookie."""
 
     async def _dependency(
         request: Request,
-        session: Annotated[AsyncSession, Depends(ctx.db_session_dependency)],
-    ) -> FastAuthUserMixin:
+        session: Annotated[Any, Depends(ctx.db_session_dependency)],
+    ) -> UserProtocol:
         token = request.cookies.get(ctx.config.cookies.session_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing session cookie.")
@@ -42,13 +41,13 @@ def session_current_user(
     return _dependency
 
 
-def jwt_current_user(ctx: AuthContext) -> Callable[..., Awaitable[FastAuthUserMixin]]:
+def jwt_current_user(ctx: AuthContext) -> Callable[..., Awaitable[UserProtocol]]:
     """Build a dependency resolving the user from the bearer access token."""
 
     async def _dependency(
-        session: Annotated[AsyncSession, Depends(ctx.db_session_dependency)],
+        session: Annotated[Any, Depends(ctx.db_session_dependency)],
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-    ) -> FastAuthUserMixin:
+    ) -> UserProtocol:
         if credentials is None:
             raise HTTPException(
                 status_code=401,

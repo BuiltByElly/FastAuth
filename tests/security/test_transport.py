@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from fastauth import JWTAuth
-from fastauth.adapters import SQLAlchemyJWTAdapter
+from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter
 from fastauth.config import (
     CookieConfig,
     FastAuthConfig,

@@ -7,15 +7,14 @@ from typing import Any, Literal
 from fastapi import Request
 from pwdlib import PasswordHash
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
 from fastauth.config import FastAuthConfig
 from fastauth.dependencies.rate_limiter import RateLimiter
-from fastauth.models import (
-    FastAuthRefreshTokenMixin,
-    FastAuthSessionMixin,
-    FastAuthUserMixin,
+from fastauth.protocols import (
+    RefreshTokenProtocol,
+    SessionProtocol,
+    UserProtocol,
 )
 
 
@@ -24,9 +23,9 @@ class AuthContext:
     """Per-instance state passed to route registrars (avoids core cycles)."""
 
     adapter_class: type[Adapter]
-    user_model: type[FastAuthUserMixin]
-    session_model: type[FastAuthSessionMixin] | None
-    db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]]
+    user_model: type[UserProtocol]
+    session_model: type[SessionProtocol] | None
+    db_session_dependency: Callable[[], AsyncGenerator[Any]]
     signup_schema: type[BaseModel]
     login_schema: type[BaseModel]
     user_response_schema: type[BaseModel]
@@ -38,9 +37,9 @@ class AuthContext:
     logout_hooks: dict[str, Callable[[Any], Awaitable[None]]]
     refresh_hooks: dict[str, Callable[[Any, Request], Awaitable[None]]]
     password_hasher: PasswordHash | None = None
-    refresh_model: type[FastAuthRefreshTokenMixin] | None = None
+    refresh_model: type[RefreshTokenProtocol] | None = None
 
-    def build_adapter(self, session: AsyncSession) -> Adapter:
+    def build_adapter(self, session: Any) -> Adapter:
         """Wrap the request's session. Sync: no I/O, cheap per-request bind."""
         return self.adapter_class(
             db_session=session,
