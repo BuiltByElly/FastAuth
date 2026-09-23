@@ -21,6 +21,7 @@ from fastauth.dependencies.current_user import jwt_current_user, session_current
 from fastauth.dependencies.rate_limiter import RateLimiter
 from fastauth.hooks.login import LoginHooks
 from fastauth.hooks.logout import LogoutHooks
+from fastauth.hooks.refresh import RefreshHooks
 from fastauth.hooks.signup import SignupHooks
 from fastauth.models import (
     FastAuthRefreshTokenMixin,
@@ -114,6 +115,9 @@ class FastAuth:
         self.logout_hooks = LogoutHooks()
         self.on_after_logout = self.logout_hooks.add_after_logout
 
+        self.refresh_hooks = RefreshHooks()
+        self.on_token_reuse_detected = self.refresh_hooks.on_token_reuse_detected
+
         self.ctx = AuthContext(
             adapter_class=adapter,
             user_model=user_model,
@@ -139,6 +143,9 @@ class FastAuth:
             },
             logout_hooks={
                 "run_after_logout": self.logout_hooks.run_after_logout,
+            },
+            refresh_hooks={
+                "run_token_reuse_detected": self.refresh_hooks.run_token_reuse_detected,
             },
         )
         tags = tags or ["Authentication"]

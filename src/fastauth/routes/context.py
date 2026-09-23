@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastauth.adapters.adapters import Adapter
 from fastauth.config import FastAuthConfig
 from fastauth.dependencies.rate_limiter import RateLimiter
-from fastauth.hooks.login import LoginFailure
 from fastauth.models import (
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
@@ -37,6 +36,7 @@ class AuthContext:
     signup_hooks: dict[str, Callable[[Any, Request], Awaitable[Any]]]
     login_hooks: dict[str, Callable[[Any, Request], Awaitable[Any]]]
     logout_hooks: dict[str, Callable[[Any], Awaitable[None]]]
+    refresh_hooks: dict[str, Callable[[Any, Request], Awaitable[None]]]
     password_hasher: PasswordHash | None = None
     refresh_model: type[FastAuthRefreshTokenMixin] | None = None
 

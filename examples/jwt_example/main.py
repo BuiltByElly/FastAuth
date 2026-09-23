@@ -83,7 +83,6 @@ auth = JWTAuth(
     config=FastAuthConfig(
         jwt=JWTConfig(secret_key="gt0tl4mZRz/XQ7+i96tPYh1XHg8U7FiU62a9QJG3n6s="),
         cookies=CookieConfig(refresh_cookie_name="refreshing"),
-        rate_limit=RateLimitConfig(storage="database"),
     ),
     db_session_dependency=get_db,
     rate_limiter=rate_limiter,
@@ -118,5 +117,10 @@ async def _(user, request: Request):
 
 
 @auth.on_after_logout
-async def _(user: res):
-    print("user logged out", user)
+async def _(user_id: str):
+    print("user logged out", user_id)
+
+
+@auth.on_token_reuse_detected
+async def _(user_id, request: Request):
+    print("token reuse detected", user_id)

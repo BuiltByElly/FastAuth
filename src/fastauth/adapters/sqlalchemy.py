@@ -10,6 +10,7 @@ from sqlalchemy import inspect, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter, SessionT, UserT
+from fastauth.adapters.exceptions import RefreshTokenReused
 from fastauth.config import JWTConfig
 from fastauth.models import FastAuthRefreshTokenMixin
 from fastauth.security import hash_password
@@ -119,7 +120,7 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
             return None
         return user
 
-    async def revoke_credential(self, token: str) -> None:
+    async def revoke_credential(self, token: str) -> str | None:
         """Delete the session row; unknown ids are ignored."""
         try:
             session_id = uuid.UUID(token)
@@ -127,8 +128,10 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
             return
         session = await self.db_session.get(self.session_model, session_id)  # type: ignore[call-arg]
         if session is not None:
+            user_id = str(session.user_id)  # type:ignore
             await self.db_session.delete(session)
             await self.db_session.flush()
+            return user_id  # type:ignore
 
 
 class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
@@ -256,7 +259,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             return None
         return user
 
-    async def revoke_credential(self, token: str) -> None:
+    async def revoke_credential(self, token: str) -> str | None:
         """No-op: stateless access tokens can't be revoked server-side."""
 
     def _require_refresh_model(self) -> type[FastAuthRefreshTokenMixin]:
@@ -266,7 +269,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             raise ValueError(msg)
         return self.refresh_model
 
-    async def _revoke_refresh_family(self, user_id: uuid.UUID) -> None:
+    async def _revoke_refresh_family(self, user_id: uuid.UUID) -> bool:
         """Stamp revoked_at on every refresh row for a user (reuse defense)."""
         model = self._require_refresh_model()
         await self.db_session.execute(
@@ -275,6 +278,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             .values(revoked_at=datetime.now(UTC))
         )
         await self.db_session.flush()
+        return True
 
     async def issue_refresh_token(self, user: UserT) -> str:
         """Mint a refresh JWT and store its row for single-use rotation."""
@@ -306,53 +310,66 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         return token
 
     async def consume_refresh_token(self, token: str) -> UserT | None:
-        """Validate a refresh JWT single-use (stamp it consumed) -> user or None.
+        """Validate and single-use-consume a refresh JWT.
 
-        Soft delete is the point: a kept consumed row distinguishes "never
-        existed" (plain reject) from "existed and was already used" (theft
-        response — revoke the user's whole refresh family).
+        Returns:
+            The user, if the token was valid and previously unused (now stamped
+            as used). ``None`` if missing, malformed, unknown, expired, or
+            already-revoked.
+
+        Raises:
+            RefreshTokenReused: the token had already been used once — the whole
+                refresh family has just been revoked.
         """
         if not token:
             return None
+
         payload = self._decode(token, REFRESH_TOKEN_TYPE)
         if payload is None:
             return None
+
         try:
             jti = uuid.UUID(str(payload.get("jti")))
             user_id = uuid.UUID(str(payload["sub"]))
-        except ValueError, AttributeError, TypeError:
+        except ValueError, AttributeError, TypeError, KeyError:
             return None
+
         model = self._require_refresh_model()
         row: Any = await self.db_session.get(model, jti)
+
         if row is None or row.revoked_at is not None:
             return None
         if row.used_at is not None:
             await self._revoke_refresh_family(user_id)
-            return None
-        expires = row.expires_at
-        if expires is None:
+            await self.db_session.flush()
+            raise RefreshTokenReused(user_id)
+
+        expires_at = row.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        if expires_at is None or expires_at <= datetime.now(UTC):
             row.revoked_at = datetime.now(UTC)
             await self.db_session.flush()
             return None
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=UTC)
-        if expires <= datetime.now(UTC):
-            row.revoked_at = datetime.now(UTC)
-            await self.db_session.flush()
-            return None
+
         user = await self.get_user_by_id(row.user_id)
-        row.used_at = datetime.now(UTC)
-        await self.db_session.flush()
         if user is None or not user.is_active:
             return None
+
+        row.used_at = datetime.now(UTC)
+        await self.db_session.flush()
         return user
 
-    async def revoke_refresh_token(self, token: str) -> None:
+    async def revoke_refresh_token(self, token: str) -> str | None:
         """Stamp the refresh row consumed for a (possibly expired) token.
 
         The row is kept (not deleted) so replaying a logged-out token is
         still recognizable as reuse. Never raises.
+
+        returns the user's id for the on_after_logout hook
         """
+        user_id = ""
         if not token or self.jwt_config is None or self.refresh_model is None:
             return
         try:
@@ -363,6 +380,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
                 options={"verify_exp": False},
             )
             jti = uuid.UUID(str(payload.get("jti")))
+            user_id = str(payload.get("sub"))
         except jwt.InvalidTokenError, ValueError, AttributeError, TypeError:
             return
         row: Any = await self.db_session.get(self.refresh_model, jti)
@@ -370,3 +388,4 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             row.used_at = datetime.now(UTC)
             row.revoked_at = datetime.now(UTC)
             await self.db_session.flush()
+        return user_id

@@ -66,7 +66,7 @@ def register_session_routes(
                 request,
             )
             return JSONResponse(
-                {"detail": "User already exists"},
+                {"detail": "Email already registered"},
                 status_code=400,
                 background=bg_tasks,
             )
@@ -126,7 +126,7 @@ def register_session_routes(
         if not verify_password(payload.password, user.hashed_password, hasher):
             bg_tasks.add_task(
                 ctx.login_hooks["run_login_failure"],
-                LoginFailure(user_id=user.id, error="Invalid credentials."),
+                LoginFailure(user_id=str(user.id), error="Invalid credentials."),
                 request,
             )
             return JSONResponse(
@@ -138,7 +138,7 @@ def register_session_routes(
         if not user.is_active:
             bg_tasks.add_task(
                 ctx.login_hooks["run_login_failure"],
-                LoginFailure(user_id=user.id, error="Account is inactive."),
+                LoginFailure(user_id=str(user.id), error="Account is inactive."),
                 request,
             )
             return JSONResponse(
@@ -173,20 +173,19 @@ def register_session_routes(
         request: Request,
         db_session: Annotated[AsyncSession, DependsSession],
         bg_tasks: BackgroundTasks,
-        current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
     ):
         """Revoke the cookie (or bearer) session id and clear the cookie."""
         token = request.cookies.get(cookies.session_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing session.")
-        await ctx.build_adapter(db_session).revoke_credential(token)
+        user_id = await ctx.build_adapter(db_session).revoke_credential(token)
+        if user_id is not None:
+            bg_tasks.add_task(ctx.logout_hooks["run_after_logout"], user_id)
         await db_session.commit()
         clear_session_cookie(
             response, name=cookies.session_cookie_name, **clear_cookie_kwargs(cookies)
         )
 
-        current_user_out = UserResponse.model_validate(current_user)
-        bg_tasks.add_task(ctx.logout_hooks["run_after_logout"], current_user_out)
         return {"success": True, "message": "logged out"}
 
     @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])

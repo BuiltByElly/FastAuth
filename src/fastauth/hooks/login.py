@@ -45,7 +45,7 @@ class LoginHooks:
     def on_before_login(self, fn: LoginHandler) -> LoginHandler:
         """Register a handler that runs before credentials are checked.
 
-        Receives the payload and the ``Request``, and must return the payload,
+        Receives the request payload and the ``Request``, and must return the payload,
         modified or not. Raise ``HookAbort(status_code, detail)`` to stop the
         login. Any other exception is logged and returns a 500.
         """
@@ -57,7 +57,15 @@ class LoginHooks:
 
         Receives a ``LoginFailure`` and the ``Request``, and returns nothing.
         It cannot change the response. Exceptions are logged and ignored.
+
+        ```python
+        class LoginFailure(BaseModel):
+            model_config = ConfigDict(frozen=True)
+            user_id: str | None  # None if the account doesn't exist
+            error: str
+        ```
         """
+
         self._login_failure.append(fn)
         return fn
 

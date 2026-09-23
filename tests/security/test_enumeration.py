@@ -30,7 +30,9 @@ def seeded_client(get_db, test_config):
     """Client with one registered user (rate limiting disabled)."""
     app, _ = build_session_app(get_db, config=test_config)
     with TestClient(app) as client:
-        client.post("/auth/signup", json={"email": "u@example.com", "password": "long-enough"})
+        client.post(
+            "/auth/signup", json={"email": "u@example.com", "password": "long-enough"}
+        )
         yield client
 
 
@@ -41,4 +43,4 @@ def test_signup_duplicate_deliberately_discloses(seeded_client):
         "/auth/signup", json={"email": "u@example.com", "password": "long-enough"}
     )
     assert response.status_code == 400
-    assert response.json() == {"detail": "Email already registered."}
+    assert response.json() == {"detail": "Email already registered"}

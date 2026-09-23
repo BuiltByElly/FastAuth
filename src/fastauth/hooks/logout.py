@@ -1,9 +1,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 
-from pydantic import BaseModel
-
-LogoutHandler = Callable[[BaseModel], Awaitable[None]]
+LogoutHandler = Callable[[str], Awaitable[None]]
 
 logger = logging.getLogger("fastauth")
 
@@ -17,11 +15,11 @@ class LogoutHooks:
     def add_after_logout(self, fn: LogoutHandler):
         """Register an observer that runs after a successful logout.
 
-        Receives a ``User``, and returns nothing.
+        Receives a ``User.id``, and returns nothing.
         It cannot change the response. Exceptions are logged to the ``fastauth`` logger and ignored.
 
         Args:
-            fn: An async function ``(user: type[BaseModel]) -> None``.
+            fn: An async function ``(user_id: str) -> None``.
 
         Returns:
             ``fn`` unchanged, so decorator use keeps the original function.
@@ -29,15 +27,15 @@ class LogoutHooks:
         self._after_logout.append(fn)
         return fn
 
-    async def run_after_logout(self, user: BaseModel):
+    async def run_after_logout(self, user_id: str):
         """Run every ``on_after_logout`` handler in order. Never raises.
 
         Args:
-            user: The user object. Validated with UserResponse.
+            user_id: The user ID.
         """
         for fn in self._after_logout:
             try:
-                await fn(user)
+                await fn(user_id)
 
             except Exception as e:
                 logger.exception(

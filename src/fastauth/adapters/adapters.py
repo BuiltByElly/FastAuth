@@ -86,7 +86,7 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
         ...
 
     @abstractmethod
-    async def revoke_credential(self, token: str) -> None:
+    async def revoke_credential(self, token: str) -> str | None:
         """Invalidate a credential: delete row (session) or no-op (JWT)."""
         ...
 
@@ -95,11 +95,14 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
     async def consume_refresh_token(self, token: str) -> UserT | None:
-        """Validate a refresh token single-use (burn it) -> user or None."""
+        """Validate a refresh token single-use (burn it) -> user or None.
+
+        Returns True if the token was consumed and its family revoked, or None if invalid/expired.
+        """
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
-    async def revoke_refresh_token(self, token: str) -> None:
-        """Delete a refresh token row if present; never raises."""
+    async def revoke_refresh_token(self, token: str) -> str | None:
+        """Delete a refresh token row if present and return the user's id for on_after_logout hook; never raises."""
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
 

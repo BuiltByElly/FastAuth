@@ -23,7 +23,9 @@ def client(app_pair):
 
 
 def signup(client, email="u@example.com", password="long-enough", **extra):
-    return client.post("/auth/signup", json={"email": email, "password": password, **extra})
+    return client.post(
+        "/auth/signup", json={"email": email, "password": password, **extra}
+    )
 
 
 def login(client, email="u@example.com", password="long-enough"):
@@ -45,7 +47,7 @@ def test_signup_rejects_duplicate_email(client):
     assert signup(client).status_code == 200
     response = signup(client)
     assert response.status_code == 400
-    assert response.json()["detail"] == "Email already registered."
+    assert response.json()["detail"] == "Email already registered"
 
 
 def test_signup_rejects_short_password(client):
@@ -145,7 +147,9 @@ def test_login_rotates_existing_session(client):
     new_cookie = client.cookies.get("fastauth_session")
     assert new_cookie and new_cookie != old_cookie
 
-    response = client.get("/auth/me", headers={"Cookie": f"fastauth_session={old_cookie}"})
+    response = client.get(
+        "/auth/me", headers={"Cookie": f"fastauth_session={old_cookie}"}
+    )
     assert response.status_code == 401
     assert client.get("/auth/me").status_code == 200
 

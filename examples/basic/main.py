@@ -96,6 +96,7 @@ async def _(user, request: Request):
 @auth.on_before_login
 async def blocking_ip(payload, request: Request):
     payload.email = payload.email.upper()
+    print("payload on_before_login", payload)
     if request.client is not None and request.client.host != "127.0.0.1":
         raise HookAbort(status_code=403, detail="Your IP is blocked skii")
     return payload

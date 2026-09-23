@@ -14,6 +14,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastauth.adapters.exceptions import RefreshTokenReused
 from fastauth.cookies import (
     clear_cookie_kwargs,
     clear_refresh_cookie,
@@ -71,7 +72,7 @@ def register_jwt_routes(
                 request,
             )
             return JSONResponse(
-                {"detail": "User already exists"},
+                {"detail": "Email already registered"},
                 status_code=400,
                 background=bg_tasks,
             )
@@ -140,7 +141,7 @@ def register_jwt_routes(
         if not user.is_active:
             bg_tasks.add_task(
                 ctx.login_hooks["run_login_failure"],
-                LoginFailure(user_id=user.id, error="Account is inactive."),
+                LoginFailure(user_id=str(user.id), error="Account is inactive."),
                 request,
             )
             return JSONResponse(
@@ -174,6 +175,7 @@ def register_jwt_routes(
         response: Response,
         request: Request,
         db_session: Annotated[AsyncSession, DependsSession],
+        bg_tasks: BackgroundTasks,
     ):
         """Rotate the refresh cookie: burn it, issue a fresh pair.
 
@@ -183,15 +185,34 @@ def register_jwt_routes(
         token = request.cookies.get(cookies.refresh_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing refresh token.")
+
         adapter = ctx.build_adapter(db_session)
-        user = await adapter.consume_refresh_token(token)
+
+        try:
+            user = await adapter.consume_refresh_token(token)
+        except RefreshTokenReused as e:
+            # The adapter already revoked the family; that write must survive
+            # the 401, so commit before returning.
+            await db_session.commit()
+            bg_tasks.add_task(
+                ctx.refresh_hooks["run_token_reuse_detected"],
+                str(e.user_id),
+                request,
+            )
+            return JSONResponse(
+                {"detail": "Invalid or expired refresh token."},
+                status_code=401,
+                background=bg_tasks,
+            )
+
         if user is None:
-            # Consume may have burned a row or revoked a stolen family:
-            # those writes must survive the 401, so commit before raising.
+            # Consume may have burned a row (expired/already-revoked cleanup):
+            # that write must survive the 401, so commit before raising.
             await db_session.commit()
             raise HTTPException(
                 status_code=401, detail="Invalid or expired refresh token."
             )
+
         access_token = str(await adapter.issue_credential(user))
         refresh_token = await adapter.issue_refresh_token(user)
         await db_session.commit()
@@ -217,13 +238,13 @@ def register_jwt_routes(
         if token is None:
             raise HTTPException(status_code=401, detail="Missing refresh token.")
         adapter = ctx.build_adapter(db_session)
-        await adapter.revoke_refresh_token(token)
+        user_id = await adapter.revoke_refresh_token(token)
+        if user_id is not None:
+            bg_tasks.add_task(ctx.logout_hooks["run_after_logout"], user_id)
         await db_session.commit()
         clear_refresh_cookie(
             response, name=cookies.refresh_cookie_name, **clear_cookie_kwargs(cookies)
         )
-        current_user_out = UserResponse.model_validate(current_user)
-        bg_tasks.add_task(ctx.logout_hooks["run_after_logout"], current_user_out)
         return {"message": "logged out"}
 
     @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
