@@ -18,7 +18,6 @@ from tests.conftest import (
     User,
     build_jwt_app,
     build_session_app,
-    cookie_value,
 )
 
 

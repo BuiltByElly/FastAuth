@@ -1,9 +1,8 @@
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Literal
 
 from fastapi import HTTPException, Request
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict
 
 from fastauth.hooks.exceptions import HookAbort
 

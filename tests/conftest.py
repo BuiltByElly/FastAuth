@@ -5,13 +5,13 @@ never imported or exercised by the suite.
 """
 
 import uuid
+from typing import Annotated, Any
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
@@ -19,7 +19,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import JWTAuth, SessionAuth
 from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
-from fastauth.adapters.rate_limit.sqlalchemy import SQLAlchemyRateLimiter
 from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
 from fastauth.models import (
     FastAuthRateLimitMixin,
@@ -149,7 +148,7 @@ def build_session_app(get_db, config=None, **kwargs):
     app.include_router(auth.router)
 
     @app.get("/protected")
-    async def protected(user=Depends(auth.current_user)):
+    async def protected(user: Annotated[Any, Depends(auth.current_user)]):
         return {"email": user.email}
 
     return app, auth
@@ -169,7 +168,7 @@ def build_jwt_app(get_db, config=None, **kwargs):
     app.include_router(auth.router)
 
     @app.get("/protected")
-    async def protected(user=Depends(auth.current_user)):
+    async def protected(user: Annotated[Any, Depends(auth.current_user)]):
         return {"email": user.email}
 
     return app, auth

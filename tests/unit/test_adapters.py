@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 
 import jwt as pyjwt
 import pytest
-from sqlalchemy import select
 
 from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
 from fastauth.config import JWTConfig
@@ -143,7 +142,6 @@ async def test_revoke_refresh_token_garbage_never_raises(db_session, jwt_cfg):
 
 
 async def test_db_rate_limiter_window_reset(session_factory):
-    from sqlalchemy import func
 
     from fastauth.adapters.rate_limit.sqlalchemy import SQLAlchemyRateLimiter
     from tests.conftest import RateLimitRow

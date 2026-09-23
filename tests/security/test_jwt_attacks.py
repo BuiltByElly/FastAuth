@@ -7,7 +7,7 @@ import jwt as pyjwt
 import pytest
 from sqlalchemy import select
 
-from tests.conftest import TEST_SECRET, User, cookie_value
+from tests.conftest import TEST_SECRET, User
 
 
 def _bearer(client, token):

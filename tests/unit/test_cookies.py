@@ -3,6 +3,7 @@
 import pytest
 from fastapi import Response
 
+from fastauth.config import CookieConfig
 from fastauth.cookies import (
     REFRESH_COOKIE_MAX_AGE,
     REFRESH_COOKIE_NAME,
@@ -16,7 +17,6 @@ from fastauth.cookies import (
     set_refresh_cookie,
     set_session_cookie,
 )
-from fastauth.config import CookieConfig
 
 
 def _header(response):

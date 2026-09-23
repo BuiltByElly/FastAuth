@@ -1,6 +1,6 @@
 """Integration: rate limits enforced on auth routes (memory + database)."""
 
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 from fastapi.testclient import TestClient

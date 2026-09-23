@@ -1,3 +1,3 @@
 from .rate_limiter import RateLimiter
 
-_all__ = ["RateLimiter"]
+__all__ = ["RateLimiter"]

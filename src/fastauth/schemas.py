@@ -3,10 +3,7 @@
 import uuid
 from typing import Any
 
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, create_model
-from starlette.requests import Request
 
 from fastauth.config import PasswordConfig
 

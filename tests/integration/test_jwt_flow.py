@@ -1,6 +1,5 @@
 """Integration: full JWT-strategy lifecycle over HTTP."""
 
-import uuid
 
 import pytest
 from sqlalchemy import func, select
