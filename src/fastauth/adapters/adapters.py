@@ -1,24 +1,15 @@
 """Per-request database bridge for FastAuth."""
 
 from abc import ABC, abstractmethod
-from typing import Any, TypeVar
+from typing import Any
 
 from pwdlib import PasswordHash
 
 from fastauth.config import JWTConfig
-from fastauth.protocols import (
-    RateLimitProtocol,
-    RefreshTokenProtocol,
-    SessionProtocol,
-    UserProtocol,
-)
-
-UserT = TypeVar("UserT", bound=UserProtocol)
-SessionT = TypeVar("SessionT", bound=SessionProtocol)
-RateLimitT = TypeVar("RateLimitT", bound=RateLimitProtocol)
+from fastauth.protocols import RateLimitT, RefreshT, SessionT, UserT
 
 
-class Adapter[UserT: UserProtocol, SessionT: SessionProtocol](ABC):
+class Adapter[UserT, SessionT](ABC):
     """Abstract base class for the JWT and Sessions strategy ORM adapters. Wraps one request-scoped session.
 
     Subclasses share method names; session vs JWT differ internally.
@@ -34,7 +25,7 @@ class Adapter[UserT: UserProtocol, SessionT: SessionProtocol](ABC):
         user_model: type[UserT],
         session_model: type[SessionT] | None = None,
         jwt_config: JWTConfig | None = None,
-        refresh_model: type[RefreshTokenProtocol] | None = None,
+        refresh_model: type[RefreshT] | None = None,
         session_expire_days: int = 7,
         password_hasher: PasswordHash | None = None,
     ):
@@ -119,7 +110,7 @@ class Adapter[UserT: UserProtocol, SessionT: SessionProtocol](ABC):
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
 
-class RateLimiterAdapter[RateLimitT: RateLimitProtocol](ABC):
+class RateLimiterAdapter[RateLimitT](ABC):
     def __init__(self, db_session: Any, model: type[RateLimitT]):
         self.db_session = db_session
         self.model = model

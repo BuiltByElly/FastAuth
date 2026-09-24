@@ -14,7 +14,6 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # from fastauth.cookies import REFRESH_COOKIE_NAME
-from fastauth.protocols import UserProtocol
 from fastauth.routes.context import AuthContext
 
 # Shared bearer scheme (auto_error=False so we raise 401, not 403).
@@ -23,13 +22,13 @@ security = HTTPBearer(auto_error=False)
 
 def session_current_user(
     ctx: AuthContext,
-) -> Callable[..., Awaitable[UserProtocol]]:
+) -> Callable[..., Awaitable[Any]]:
     """Build a dependency resolving the user from the session cookie."""
 
     async def _dependency(
         request: Request,
         session: Annotated[Any, Depends(ctx.db_session_dependency)],
-    ) -> UserProtocol:
+    ) -> Any:
         token = request.cookies.get(ctx.config.cookies.session_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing session cookie.")
@@ -41,13 +40,13 @@ def session_current_user(
     return _dependency
 
 
-def jwt_current_user(ctx: AuthContext) -> Callable[..., Awaitable[UserProtocol]]:
+def jwt_current_user(ctx: AuthContext) -> Callable[..., Awaitable[Any]]:
     """Build a dependency resolving the user from the bearer access token."""
 
     async def _dependency(
         session: Annotated[Any, Depends(ctx.db_session_dependency)],
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-    ) -> UserProtocol:
+    ) -> Any:
         if credentials is None:
             raise HTTPException(
                 status_code=401,

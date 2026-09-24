@@ -21,7 +21,6 @@ from fastauth.cookies import (
     set_session_cookie,
 )
 from fastauth.hooks.login import LoginFailure
-from fastauth.protocols import UserProtocol
 from fastauth.routes.context import AuthContext
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 
@@ -29,7 +28,7 @@ from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 def register_session_routes(
     router: APIRouter,
     ctx: AuthContext,
-    current_user: Callable[..., Awaitable[UserProtocol]],
+    current_user: Callable[..., Awaitable[Any]],
 ) -> None:
     """Mount signup/login/logout/me using session rows vía the adapter."""
     SignupRequest = ctx.signup_schema
@@ -191,7 +190,7 @@ def register_session_routes(
 
     @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
     async def me(
-        current_user: Annotated[UserProtocol, Depends(current_user)],
+        current_user: Annotated[Any, Depends(current_user)],
     ):
         """Return the user behind the cookie (or bearer) session id."""
         return current_user

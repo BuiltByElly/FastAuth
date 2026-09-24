@@ -17,7 +17,7 @@ from fastapi import Depends, HTTPException, Request
 from fastauth.adapters.adapters import RateLimiterAdapter
 from fastauth.adapters.rate_limit.memory import InMemoryRateLimiter
 from fastauth.config import RateLimitConfig
-from fastauth.protocols import RateLimitProtocol
+from fastauth.protocols import RateLimitProtocol, RateLimitT, ensure_model_compliance
 
 DependencyFn = Callable[..., Awaitable[None]]
 
@@ -33,7 +33,7 @@ class RateLimiter:
         self,
         rate_limiter_adapter: type[RateLimiterAdapter] | None = None,
         db_session_dependency: Callable[[], AsyncGenerator[Any]] | None = None,
-        rate_limit_model: type[RateLimitProtocol] | None = None,
+        rate_limit_model: type[RateLimitT] | None = None,
         rate_limit_config: RateLimitConfig | None = None,
     ):
         """Bind storage backend once; lives for the app lifetime.
@@ -60,13 +60,14 @@ class RateLimiter:
 
         elif self._config.storage == "database":
             if rate_limit_model is None:
-                raise ValueError(
-                    "storage='database' requires a rate_limit_model."
-                )
+                raise ValueError("storage='database' requires a rate_limit_model.")
             if db_session_dependency is None:
                 raise ValueError("storage='database' requires a db_session_dependency.")
             if rate_limiter_adapter is None:
                 raise ValueError("storage='database' requires a rate_limiter_adapter.")
+            ensure_model_compliance(
+                rate_limit_model, RateLimitProtocol, name="rate_limit_model"
+            )
 
             async def _provide_db(
                 db_session: Annotated[Any, Depends(db_session_dependency)],

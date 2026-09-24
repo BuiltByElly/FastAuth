@@ -21,7 +21,6 @@ from fastauth.cookies import (
     set_refresh_cookie,
 )
 from fastauth.hooks.login import LoginFailure
-from fastauth.protocols import UserProtocol
 from fastauth.routes.context import AuthContext
 from fastauth.schemas import TokenResponse
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
@@ -30,7 +29,7 @@ from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 def register_jwt_routes(
     router: APIRouter,
     ctx: AuthContext,
-    current_user: Callable[..., Awaitable[UserProtocol]],
+    current_user: Callable[..., Awaitable[Any]],
 ) -> None:
     """Mount signup/login/refresh/logout/me using signed JWTs vía the adapter.
 
@@ -248,7 +247,7 @@ def register_jwt_routes(
 
     @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
     async def me(
-        current_user: Annotated[UserProtocol, Depends(current_user)],
+        current_user: Annotated[Any, Depends(current_user)],
     ):
         """Return the user behind the bearer token."""
         user = current_user

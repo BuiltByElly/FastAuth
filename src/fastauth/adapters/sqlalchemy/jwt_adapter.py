@@ -7,9 +7,10 @@ from pwdlib import PasswordHash
 from sqlalchemy import delete, inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastauth.adapters.adapters import Adapter, SessionT, UserT
+from fastauth.adapters.adapters import Adapter
 from fastauth.adapters.exceptions import RefreshTokenReused
 from fastauth.config import JWTConfig
+from fastauth.protocols import SessionT, UserT
 from fastauth.security import hash_password
 
 from .models import FastAuthRefreshTokenMixin

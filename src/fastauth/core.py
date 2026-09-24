@@ -20,7 +20,15 @@ from fastauth.hooks.login import LoginHooks
 from fastauth.hooks.logout import LogoutHooks
 from fastauth.hooks.refresh import RefreshHooks
 from fastauth.hooks.signup import SignupHooks
-from fastauth.protocols import RefreshTokenProtocol, SessionProtocol, UserProtocol
+from fastauth.protocols import (
+    RefreshT,
+    RefreshTokenProtocol,
+    SessionProtocol,
+    SessionT,
+    UserProtocol,
+    UserT,
+    ensure_model_compliance,
+)
 from fastauth.routes.context import AuthContext
 from fastauth.routes.jwt_route import register_jwt_routes
 from fastauth.routes.session import register_session_routes
@@ -48,7 +56,7 @@ class FastAuth:
         self,
         adapter: type[Adapter],
         db_session_dependency: Callable[[], AsyncGenerator[Any]],
-        user_model: type[UserProtocol],
+        user_model: type[UserT],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -69,6 +77,7 @@ class FastAuth:
         """
         cfg = config or FastAuthConfig()
         self.config = cfg
+        ensure_model_compliance(user_model, UserProtocol, name="user_model")
         self.password_hasher = build_hasher(cfg.password.hash_schemes)
         if rate_limiter is not None and cfg.rate_limit != RateLimitConfig():
             warnings.warn(
@@ -158,8 +167,8 @@ class SessionAuth(FastAuth):
         self,
         adapter: type[Adapter],
         db_session_dependency: Callable[[], AsyncGenerator[Any]],
-        user_model: type[UserProtocol],
-        session_model: type[SessionProtocol],
+        user_model: type[UserT],
+        session_model: type[SessionT],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -183,6 +192,7 @@ class SessionAuth(FastAuth):
 
         self.current_user = session_current_user(self.ctx)
         self.ctx.session_model = session_model
+        ensure_model_compliance(session_model, SessionProtocol, name="session_model")
         register_session_routes(self.router, self.ctx, self.current_user)
 
 
@@ -199,8 +209,8 @@ class JWTAuth(FastAuth):
         self,
         adapter: type[Adapter],
         db_session_dependency: Callable[[], AsyncGenerator[Any]],
-        user_model: type[UserProtocol],
-        refresh_model: type[RefreshTokenProtocol],
+        user_model: type[UserT],
+        refresh_model: type[RefreshT],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -228,6 +238,9 @@ class JWTAuth(FastAuth):
             raise ValueError(msg)
         self.refresh_model = refresh_model
         self.ctx.refresh_model = refresh_model
+        ensure_model_compliance(
+            refresh_model, RefreshTokenProtocol, name="refresh_model"
+        )
         self.current_user = jwt_current_user(self.ctx)
         register_jwt_routes(self.router, self.ctx, self.current_user)
 

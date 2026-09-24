@@ -11,11 +11,6 @@ from pydantic import BaseModel
 from fastauth.adapters.adapters import Adapter
 from fastauth.config import FastAuthConfig
 from fastauth.dependencies.rate_limiter import RateLimiter
-from fastauth.protocols import (
-    RefreshTokenProtocol,
-    SessionProtocol,
-    UserProtocol,
-)
 
 
 @dataclass
@@ -23,8 +18,8 @@ class AuthContext:
     """Per-instance state passed to route registrars (avoids core cycles)."""
 
     adapter_class: type[Adapter]
-    user_model: type[UserProtocol]
-    session_model: type[SessionProtocol] | None
+    user_model: type[Any]
+    session_model: type[Any] | None
     db_session_dependency: Callable[[], AsyncGenerator[Any]]
     signup_schema: type[BaseModel]
     login_schema: type[BaseModel]
@@ -37,7 +32,7 @@ class AuthContext:
     logout_hooks: dict[str, Callable[[Any], Awaitable[None]]]
     refresh_hooks: dict[str, Callable[[Any, Request], Awaitable[None]]]
     password_hasher: PasswordHash | None = None
-    refresh_model: type[RefreshTokenProtocol] | None = None
+    refresh_model: type[Any] | None = None
 
     def build_adapter(self, session: Any) -> Adapter:
         """Wrap the request's session. Sync: no I/O, cheap per-request bind."""
