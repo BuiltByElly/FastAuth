@@ -5,6 +5,7 @@ import ast
 import pytest
 
 from fastauth.protocols import (
+    PasswordResetTokenProtocol,
     RateLimitProtocol,
     RefreshTokenProtocol,
     SessionProtocol,
@@ -12,7 +13,13 @@ from fastauth.protocols import (
     UserT,
     ensure_model_compliance,
 )
-from tests.conftest import RateLimitRow, RefreshToken, Session, User
+from tests.conftest import (
+    PasswordResetToken,
+    RateLimitRow,
+    RefreshToken,
+    Session,
+    User,
+)
 
 
 def test_protocols_import_nothing_orm_specific():
@@ -41,6 +48,11 @@ def test_typevars_are_unbound():
         (Session, SessionProtocol, "session_model"),
         (RefreshToken, RefreshTokenProtocol, "refresh_model"),
         (RateLimitRow, RateLimitProtocol, "rate_limit_model"),
+        (
+            PasswordResetToken,
+            PasswordResetTokenProtocol,
+            "password_reset_token_model",
+        ),
     ],
 )
 def test_valid_models_pass_compliance(model, protocol, name):
@@ -68,6 +80,21 @@ def test_empty_model_lists_everything_missing():
         ensure_model_compliance(Empty, SessionProtocol, name="session_model")
     for attr in ("id", "user_id", "expires_at", "created_at"):
         assert attr in str(exc.value)
+
+
+def test_reset_token_model_missing_hash_fails():
+    class PartialReset:
+        id = None
+        user_id = None
+
+    with pytest.raises(TypeError) as exc:
+        ensure_model_compliance(
+            PartialReset,
+            PasswordResetTokenProtocol,
+            name="password_reset_token_model",
+        )
+    assert "token_hash" in str(exc.value)
+    assert "expires_at" in str(exc.value)
 
 
 def test_auth_construction_rejects_noncompliant_model(get_db):

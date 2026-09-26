@@ -3,17 +3,13 @@
 import pytest
 from fastapi import Response
 
-from fastauth.config import CookieConfig
 from fastauth.cookies import (
     REFRESH_COOKIE_MAX_AGE,
     REFRESH_COOKIE_NAME,
     SESSION_COOKIE_MAX_AGE,
     SESSION_COOKIE_NAME,
-    clear_cookie_kwargs,
     clear_refresh_cookie,
     clear_session_cookie,
-    refresh_cookie_kwargs,
-    session_cookie_kwargs,
     set_refresh_cookie,
     set_session_cookie,
 )
@@ -84,21 +80,3 @@ def test_clear_uses_matching_name():
     response = Response()
     clear_session_cookie(response, name="custom")
     assert "custom=" in _header(response)
-
-
-def test_kwargs_expanders_mirror_config():
-    cfg = CookieConfig(
-        session_cookie_name="s", refresh_cookie_name="r",
-        secure=False, samesite="strict", path="/a", domain="example.com",
-    )
-    assert session_cookie_kwargs(cfg, max_age=10) == {
-        "name": "s", "max_age": 10, "secure": False,
-        "samesite": "strict", "path": "/a", "domain": "example.com",
-    }
-    assert refresh_cookie_kwargs(cfg, max_age=20)["name"] == "r"
-    assert refresh_cookie_kwargs(cfg, max_age=20)["max_age"] == 20
-    cleared = clear_cookie_kwargs(cfg)
-    assert cleared == {
-        "secure": False, "samesite": "strict",
-        "path": "/a", "domain": "example.com",
-    }

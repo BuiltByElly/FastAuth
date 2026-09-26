@@ -8,6 +8,7 @@ from fastauth.schemas import (
     LoginRequest,
     SignupBase,
     build_login_schema,
+    build_password_reset_token_schema,
     build_signup_schema,
     build_user_response_schema,
 )
@@ -69,3 +70,19 @@ def test_user_response_rejects_bad_email():
 
     with pytest.raises(ValidationError):
         schema(id=uuid.uuid4(), email="not-an-email", is_active=True)
+
+
+def test_password_reset_schema_enforces_policy():
+    schema = build_password_reset_token_schema(PasswordConfig(min_length=12))
+    with pytest.raises(ValidationError):
+        schema(token="tok", new_password="only-eight")
+    assert (
+        schema(token="tok", new_password="twelve-chars!").new_password.get_secret_value()
+        == "twelve-chars!"
+    )
+
+
+def test_password_reset_schema_rejects_empty_token():
+    schema = build_password_reset_token_schema()
+    with pytest.raises(ValidationError):
+        schema(token="", new_password="long-enough")

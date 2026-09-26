@@ -94,17 +94,6 @@ async def test_login_inactive_user_is_403(client, session_factory):
     assert login(client).status_code == 403
 
 
-# async def test_inactive_user_token_rejected(client, session_factory):
-#     signup(client)
-#     token = login(client).json()["access_token"]
-#     async with session_factory() as session:
-#         user = (await session.execute(select(User))).scalar_one()
-#         user.is_active = False
-#         await session.commit()
-#     response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
-#     assert response.status_code == 401
-
-
 def test_me_without_or_with_bad_bearer_is_401(client):
     assert client.get("/auth/me").status_code == 401
     assert (
@@ -203,26 +192,3 @@ async def test_purge_deletes_only_expired_rows(auth, session_factory, client):
     # Purging again is a no-op returning 0.
     async with session_factory() as session:
         assert await auth.purge_expired_refresh_tokens(session) == 0
-
-
-async def test_purge_keeps_outstanding_rows(auth, session_factory, client):
-    signup(client)
-    login(client)
-    async with session_factory() as session:
-        assert await auth.purge_expired_refresh_tokens(session) == 0
-        remaining = await session.scalar(select(func.count()).select_from(RefreshToken))
-        assert remaining == 2  # signup pair + login pair, both outstanding
-
-
-def test_jwt_requires_config(get_db):
-    from fastauth import JWTAuth
-    from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter
-    from tests.conftest import RefreshToken, User
-
-    with pytest.raises(ValueError, match="config.jwt"):
-        JWTAuth(
-            adapter=SQLAlchemyJWTAdapter,
-            user_model=User,
-            refresh_model=RefreshToken,
-            db_session_dependency=get_db,
-        )

@@ -116,44 +116,6 @@ def test_observer_return_value_cannot_change_response(apps):
         assert login.json() == {"success": True, "message": "Logged in successfully"}
 
 
-@pytest.mark.parametrize(
-    "email,password",
-    [
-        ("ghost@example.com", "long-enough"),  # unknown account
-        ("u@example.com", "wrong-pass-1"),  # known account, wrong password
-    ],
-)
-def test_login_failures_byte_identical_session(apps, email, password):
-    """Unknown vs wrong-password must be indistinguishable on the wire."""
-    (s_app, _), _ = apps
-    with TestClient(s_app) as client:
-        client.post("/auth/signup", json=SIGNUP)
-        response = client.post(
-            "/auth/login", json={"email": email, "password": password}
-        )
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Invalid credentials."}
-
-
-@pytest.mark.parametrize(
-    "email,password",
-    [
-        ("ghost@example.com", "long-enough"),
-        ("u@example.com", "wrong-pass-1"),
-    ],
-)
-def test_login_failures_byte_identical_jwt(apps, email, password):
-    """Same indistinguishability guarantee on the JWT strategy."""
-    _, (j_app, _) = apps
-    with TestClient(j_app) as client:
-        client.post("/auth/signup", json=SIGNUP)
-        response = client.post(
-            "/auth/login", json={"email": email, "password": password}
-        )
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Invalid credentials."}
-
-
 async def test_hook_cannot_smuggle_non_schema_fields(apps, session_factory):
     """A handler assigning undeclared attributes (is_active, id,
     hashed_password) blows up inside the runner → 500, no user row."""

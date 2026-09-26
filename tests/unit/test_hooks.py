@@ -8,6 +8,8 @@ from pydantic import ValidationError
 from fastauth.hooks.exceptions import HookAbort
 from fastauth.hooks.login import LoginFailure, LoginHooks
 from fastauth.hooks.logout import LogoutHooks
+from fastauth.hooks.models import PasswordChanged, PasswordResetRequested
+from fastauth.hooks.password import PasswordHooks
 from fastauth.hooks.refresh import RefreshHooks
 from fastauth.hooks.signup import SignupHooks
 from fastauth.schemas import build_login_schema, build_signup_schema
@@ -124,3 +126,42 @@ def test_registration_returns_fn_for_decorator_use(signup_hooks):
         return payload
 
     assert signup_hooks.on_before_signup(handler) is handler
+
+
+async def test_password_observers_never_raise():
+    hooks = PasswordHooks()
+
+    async def boom(event, request):
+        raise RuntimeError("kaboom")
+
+    hooks.on_password_reset_requested(boom)
+    hooks.on_password_changed(boom)
+
+    await hooks.run_password_reset_requested(
+        PasswordResetRequested(user_id="u", email="u@example.com", token="t"),
+        make_request("/auth/forgot-password"),
+    )
+    await hooks.run_password_changed(
+        PasswordChanged(user_id="u"), make_request("/auth/reset-password")
+    )
+
+
+def test_password_registration_returns_fn_for_decorator_use():
+    hooks = PasswordHooks()
+
+    async def on_requested(event, request): ...
+    async def on_changed(event, request): ...
+
+    assert hooks.on_password_reset_requested(on_requested) is on_requested
+    assert hooks.on_password_changed(on_changed) is on_changed
+
+
+def test_password_events_are_frozen():
+    requested = PasswordResetRequested(
+        user_id="u", email="u@example.com", token="tok"
+    )
+    with pytest.raises(ValidationError):
+        requested.token = "tampered"  # type: ignore[misc]
+    changed = PasswordChanged(user_id="u")
+    with pytest.raises(ValidationError):
+        changed.user_id = "tampered"  # type: ignore[misc]

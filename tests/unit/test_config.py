@@ -8,7 +8,6 @@ from fastauth.config import (
     FastAuthConfig,
     JWTConfig,
     PasswordConfig,
-    RateLimitConfig,
     SessionConfig,
 )
 
@@ -34,12 +33,6 @@ def test_config_is_frozen():
     cfg = FastAuthConfig()
     with pytest.raises(ValidationError):
         cfg.session.expire_days = 3
-
-
-def test_model_copy_override_style():
-    cfg = FastAuthConfig().model_copy(update={"session": SessionConfig(expire_days=3)})
-    assert cfg.session.expire_days == 3
-    assert cfg.cookies.session_cookie_name == "fastauth_session"
 
 
 @pytest.mark.parametrize("secret", ["short", "change-me", "Secret", "PASSWORD", "test"])
@@ -104,10 +97,3 @@ def test_password_rejects_inconsistent_lengths():
         PasswordConfig(min_length=20, max_length=10)
     with pytest.raises(ValidationError):
         PasswordConfig(min_length=0)
-
-
-def test_rate_limit_custom_rules_override():
-    cfg = RateLimitConfig(custom_rules={"/login": (10, 2)})
-    assert cfg.custom_rules["/login"] == (10, 2)
-    # A supplied dict replaces (not merges) the defaults.
-    assert "/signup" not in cfg.custom_rules

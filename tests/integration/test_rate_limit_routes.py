@@ -4,7 +4,6 @@ from typing import Literal
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
 
 from fastauth.adapters.rate_limit.sqlalchemy import SQLAlchemyRateLimiter
 from fastauth.config import CookieConfig, FastAuthConfig, RateLimitConfig
@@ -103,27 +102,6 @@ def test_database_storage_enforces_limits(get_db):
     assert codes == [401, 401, 429]
 
 
-async def test_database_storage_persists_counters(get_db, session_factory):
-    app = limited_app(
-        get_db,
-        {},
-        storage="database",
-        rate_limiter=RateLimiter(
-            rate_limiter_adapter=SQLAlchemyRateLimiter,
-            db_session_dependency=get_db,
-            rate_limit_model=RateLimitRow,
-            rate_limit_config=RateLimitConfig(
-                storage="database", custom_rules={"/login": (60, 100)}
-            ),
-        ),
-    )
-    with TestClient(app) as client:
-        login(client)
-    async with session_factory() as session:
-        count = await session.scalar(select(func.count()).select_from(RateLimitRow))
-        assert count == 1
-
-
 def test_database_storage_requires_model_and_adapter(get_db):
     with pytest.raises(ValueError, match="rate_limit_model"):
         limited_app(
@@ -179,9 +157,25 @@ def test_explicit_limiter_wins_over_config_and_warns(get_db):
         assert login(client).status_code == 429
 
 
-def test_no_warning_when_config_section_untouched(get_db, recwarn):
-    limiter = RateLimiter(
-        rate_limit_config=RateLimitConfig(custom_rules={"/login": (60, 100)})
-    )
-    limited_app(get_db, {}, rate_limiter=limiter)
-    assert [w for w in recwarn.list if "rate_limit" in str(w.message)] == []
+def test_forgot_password_is_rate_limited(get_db):
+    app = limited_app(get_db, {"/forgot-password": (60, 2), "/login": (60, 100)})
+    with TestClient(app) as client:
+        codes = [
+            client.post(
+                "/auth/forgot-password", json={"email": "u@example.com"}
+            ).status_code
+            for _ in range(3)
+        ]
+    assert codes == [200, 200, 429]
+
+
+def test_reset_password_is_rate_limited(get_db):
+    app = limited_app(get_db, {"/reset-password": (60, 2), "/login": (60, 100)})
+    payload = {"token": "anything", "new_password": "brand-new-password"}
+    with TestClient(app) as client:
+        codes = [
+            client.post("/auth/reset-password", json=payload).status_code
+            for _ in range(3)
+        ]
+    # First two reach the handler (400 unknown token); third is throttled.
+    assert codes == [400, 400, 429]

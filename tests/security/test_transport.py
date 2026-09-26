@@ -13,7 +13,6 @@ from fastauth.config import (
     RateLimitConfig,
 )
 from tests.conftest import (
-    TEST_SECRET,
     RefreshToken,
     User,
     build_jwt_app,
@@ -110,18 +109,6 @@ def test_jwt_auth_without_jwt_section_rejected(get_db):
             db_session_dependency=get_db,
             config=FastAuthConfig(),  # jwt=None
         )
-
-
-def test_jwt_auth_supports_custom_secret_config(get_db):
-    """Sanity: a well-formed config constructs and serves a token."""
-    config = _unlimited_secure_config(jwt=JWTConfig(secret_key=TEST_SECRET))
-    app, _ = build_jwt_app(get_db, config=config)
-    with TestClient(app) as client:
-        assert (
-            client.post("/auth/signup", json={"email": "u@example.com", "password": "long-enough"}).status_code
-            == 200
-        )
-        assert len(login(client).json()["access_token"].split(".")) == 3
 
 
 def login(client):

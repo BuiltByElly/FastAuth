@@ -20,6 +20,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from fastauth import JWTAuth, SessionAuth
 from fastauth.adapters.sqlalchemy.jwt_adapter import SQLAlchemyJWTAdapter
 from fastauth.adapters.sqlalchemy.models import (
+    FastAuthPasswordResetTokensMixin,
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
@@ -61,6 +62,22 @@ class RateLimitRow(Base, FastAuthRateLimitMixin):
     """Test rate-limit counter table."""
 
     __tablename__ = "rate_limits"
+
+
+class PasswordResetToken(Base, FastAuthPasswordResetTokensMixin):
+    """Test password-reset-token table linked to User."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+
+
+class ExtraPasswordResetToken(Base, FastAuthPasswordResetTokensMixin):
+    """Reset-token table linked to ExtraUser (hook-matrix apps)."""
+
+    __tablename__ = "extra_password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("extra_users.id"))
 
 
 class ExtraUser(Base, FastAuthUserMixin):
@@ -137,6 +154,7 @@ def jwt_config():
 
 def build_session_app(get_db, config=None, **kwargs):
     """SessionAuth app with a /protected route behind `auth.current_user`."""
+    kwargs.setdefault("password_reset_token_model", PasswordResetToken)
     auth = SessionAuth(
         adapter=SQLAlchemySessionAdapter,
         user_model=User,
@@ -157,6 +175,7 @@ def build_session_app(get_db, config=None, **kwargs):
 
 def build_jwt_app(get_db, config=None, **kwargs):
     """JWTAuth app with a /protected route behind `auth.current_user`."""
+    kwargs.setdefault("password_reset_token_model", PasswordResetToken)
     auth = JWTAuth(
         adapter=SQLAlchemyJWTAdapter,
         user_model=User,
@@ -212,7 +231,9 @@ def cookie_value(set_cookie_header):
 __all__ = [
     "TEST_SECRET",
     "Base",
+    "ExtraPasswordResetToken",
     "ExtraUser",
+    "PasswordResetToken",
     "RateLimitRow",
     "RefreshToken",
     "Session",
