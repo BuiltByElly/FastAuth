@@ -97,7 +97,7 @@ class SignupHooks:
         next handler runs.
 
         Args:
-            payload: The validated signup request.
+            payload: The validated user signup request schema.
             request: The incoming FastAPI request. Handlers should treat it as
                 read-only.
 

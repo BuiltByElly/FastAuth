@@ -6,7 +6,13 @@ from typing import Any
 from pwdlib import PasswordHash
 
 from fastauth.config import JWTConfig
-from fastauth.protocols import RateLimitT, RefreshT, SessionT, UserT
+from fastauth.protocols import (
+    PasswordResetTokenT,
+    RateLimitT,
+    RefreshT,
+    SessionT,
+    UserT,
+)
 
 
 class Adapter[UserT, SessionT](ABC):
@@ -28,6 +34,7 @@ class Adapter[UserT, SessionT](ABC):
         refresh_model: type[RefreshT] | None = None,
         session_expire_days: int = 7,
         password_hasher: PasswordHash | None = None,
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
     ):
         """Store the request-scoped session plus app models (no commit here).
 
@@ -36,12 +43,13 @@ class Adapter[UserT, SessionT](ABC):
         passed back into the backend's own adapter methods.
         """
         self.db_session = db_session
-        self.user_model: type[UserT] = user_model
-        self.session_model: type[SessionT] | None = session_model
+        self.user_model = user_model
+        self.session_model = session_model
         self.jwt_config = jwt_config
         self.refresh_model = refresh_model
         self.session_expire_days = session_expire_days
         self.password_hasher = password_hasher
+        self.password_reset_token_model = password_reset_token_model
 
     @classmethod
     @abstractmethod
@@ -85,6 +93,13 @@ class Adapter[UserT, SessionT](ABC):
         """Invalidate a credential: delete row (session) or no-op (JWT)."""
         ...
 
+    @abstractmethod
+    def require_password_reset_model(
+        self,
+    ) -> type[PasswordResetTokenT]:
+        """Return the configured password-reset-token model, or fail fast."""
+        ...
+
     async def issue_refresh_token(self, user: UserT) -> str:
         """Mint + store a refresh token (JWT-only; others raise)."""
         raise NotImplementedError("This strategy does not support refresh tokens.")
@@ -108,6 +123,22 @@ class Adapter[UserT, SessionT](ABC):
         commits. Designed for a scheduler job.
         """
         raise NotImplementedError("This strategy does not support refresh tokens.")
+
+    async def set_password(self, user: UserT, new_password: str) -> None:
+        """Hash and persist a new password for the user."""
+
+    async def revoke_credentials_on_password_reset(self, user: UserT) -> None:
+        """Invalidate whatever currently lets this user stay logged in.
+
+        Session strategy: delete/revoke session rows.
+        JWT strategy: stamp `password_changed_at` and revoke the refresh
+        token family, so old access tokens are rejected and no new ones
+        can be minted from a stolen refresh token.
+        """
+
+    async def create_password_reset_token(self, user: UserT) -> str: ...
+
+    async def consume_password_reset_token(self, token: str) -> UserT | None: ...
 
 
 class RateLimiterAdapter[RateLimitT](ABC):

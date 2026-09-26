@@ -62,6 +62,17 @@ class RateLimitProtocol(Protocol):
     window_start: datetime
 
 
+@runtime_checkable
+class PasswordResetTokenProtocol(Protocol):
+    """Anything FastAuth can use as a password-reset-token row."""
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    token_hash: str
+    expires_at: datetime
+    used_at: datetime | None
+
+
 # Unbound type variables for positions that accept *any* backend's model
 # (e.g. ``user_model: type[UserT]`` on constructors). They are deliberately
 # NOT bound to the protocols above: SQLAlchemy ``Mapped[...]`` attributes
@@ -72,6 +83,7 @@ UserT = TypeVar("UserT")
 SessionT = TypeVar("SessionT")
 RefreshT = TypeVar("RefreshT")
 RateLimitT = TypeVar("RateLimitT")
+PasswordResetTokenT = TypeVar("PasswordResetTokenT")
 
 
 def _required_attributes(protocol: type) -> tuple[str, ...]:

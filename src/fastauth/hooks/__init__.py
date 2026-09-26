@@ -1,4 +1,4 @@
 from .exceptions import HookAbort
-from .login import LoginFailure
+from .models import LoginFailure, PasswordChanged, PasswordResetRequested
 
-__all__ = ["HookAbort", "LoginFailure"]
+__all__ = ["HookAbort", "LoginFailure", "PasswordChanged", "PasswordResetRequested"]

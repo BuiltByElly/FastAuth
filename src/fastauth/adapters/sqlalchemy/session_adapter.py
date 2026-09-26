@@ -7,13 +7,19 @@ from typing import Any
 from pwdlib import PasswordHash
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import delete
 
 from fastauth.adapters.adapters import Adapter
+from fastauth.adapters.sqlalchemy.mixins import PasswordResetTokenAdapterMixin
 from fastauth.config import JWTConfig
 from fastauth.protocols import SessionT, UserT
 from fastauth.security import hash_password
 
-from .models import FastAuthRefreshTokenMixin
+from .models import (
+    FastAuthPasswordResetTokensMixin,
+    FastAuthRefreshTokenMixin,
+    FastAuthSessionMixin,
+)
 
 
 def _tagged_fields(model: type, flag: str) -> dict[str, tuple[type, Any]]:
@@ -26,7 +32,9 @@ def _tagged_fields(model: type, flag: str) -> dict[str, tuple[type, Any]]:
     return fields
 
 
-class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
+class SQLAlchemySessionAdapter(
+    PasswordResetTokenAdapterMixin, Adapter[UserT, SessionT]
+):
     """DB-backed credentials: sessions persisted as rows, expiry enforced."""
 
     def __init__(
@@ -38,6 +46,8 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
         refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
         session_expire_days: int = 7,
         password_hasher: PasswordHash | None = None,
+        password_reset_token_model: type[FastAuthPasswordResetTokensMixin]
+        | None = None,
     ):
         """Bind a request session plus the app's User/Session models."""
         super().__init__(
@@ -48,6 +58,7 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
             refresh_model,
             session_expire_days,
             password_hasher,
+            password_reset_token_model,
         )
 
     @classmethod
@@ -129,3 +140,22 @@ class SQLAlchemySessionAdapter(Adapter[UserT, SessionT]):
             await self.db_session.delete(session)
             await self.db_session.flush()
             return user_id  # type:ignore
+
+    def require_password_reset_model(
+        self,
+    ) -> type[FastAuthPasswordResetTokensMixin]:
+        if self.password_reset_token_model is None:
+            raise ValueError("password_reset_token_model is required")
+        return self.password_reset_token_model  # type: ignore[return-value]
+
+    def _require_session_model(
+        self,
+    ) -> type[FastAuthSessionMixin]:
+        if self.session_model is None:
+            raise ValueError("session_model is required")
+        return self.session_model  # type: ignore[return-value]
+
+    async def revoke_credentials_on_password_reset(self, user: UserT) -> None:
+        model = self._require_session_model()
+        await self.db_session.execute(delete(model).where(model.user_id == user.id))  # type: ignore[call-arg]
+        await self.db_session.flush()

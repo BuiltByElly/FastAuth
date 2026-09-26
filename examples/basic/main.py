@@ -9,14 +9,18 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import SessionAuth
 from fastauth.adapters.sqlalchemy import SQLAlchemySessionAdapter
-from fastauth.adapters.sqlalchemy.models import FastAuthSessionMixin, FastAuthUserMixin
+from fastauth.adapters.sqlalchemy.models import (
+    FastAuthPasswordResetTokensMixin,
+    FastAuthSessionMixin,
+    FastAuthUserMixin,
+)
 from fastauth.config import (
     CookieConfig,
     FastAuthConfig,
     PasswordConfig,
 )
 from fastauth.hooks.exceptions import HookAbort
-from fastauth.hooks.login import LoginFailure
+from fastauth.hooks.models import LoginFailure, PasswordChanged, PasswordResetRequested
 
 from .database import engine, get_db
 
@@ -48,6 +52,14 @@ class Session(Base, FastAuthSessionMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
 
+class PasswordResetTokenModel(Base, FastAuthPasswordResetTokensMixin):
+    """App password reset token model."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create tables on startup, dispose engine on shutdown."""
@@ -70,6 +82,7 @@ auth = SessionAuth(
         ),
     ),
     db_session_dependency=get_db,
+    password_reset_token_model=PasswordResetTokenModel,
 )
 
 app.include_router(auth.router)
@@ -78,7 +91,7 @@ app.include_router(auth.router)
 
 @auth.on_before_signup
 async def normalize_email(payload, request: Request):
-    payload.email = payload.email.upper()
+    payload.email = payload.email.lower()
     print("payload on_before_signup", payload)
     return payload
 
@@ -95,7 +108,7 @@ async def _(user, request: Request):
 
 @auth.on_before_login
 async def blocking_ip(payload, request: Request):
-    payload.email = payload.email.upper()
+    payload.email = payload.email.lower()
     print("payload on_before_login", payload)
     if request.client is not None and request.client.host != "127.0.0.1":
         raise HookAbort(status_code=403, detail="Your IP is blocked skii")
@@ -115,3 +128,13 @@ async def _(user, request: Request):
 @auth.on_after_logout
 async def _(user):
     print("user logged out", user)
+
+
+@auth.on_password_reset_requested
+async def _(data: PasswordResetRequested, request: Request):
+    print("password reset requested", data)
+
+
+@auth.on_password_changed
+async def _(data: PasswordChanged, request: Request):
+    print("password changed", data)

@@ -46,6 +46,15 @@ class SessionResponse(BaseModel):
     expires_at: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=256)
+    new_password: SecretStr = Field(min_length=8, max_length=128)
+
+
 def _password_field(password_config: PasswordConfig | None = None) -> Any:
     """Password field honoring the configured policy (defaults 8..128)."""
     pc = password_config or PasswordConfig()
@@ -85,3 +94,16 @@ def build_login_schema(
 def build_user_response_schema(extra_fields: dict[str, Any]) -> type[BaseModel]:
     """Combine UserResponseBase with dev columns tagged fastauth_returned=True."""
     return create_model("UserResponse", __base__=UserResponseBase, **extra_fields)  # type: ignore[call-overload]
+
+
+def build_password_reset_token_schema(
+    password_config: PasswordConfig | None = None,
+) -> type[BaseModel]:
+    if password_config is None:
+        return ResetPasswordRequest
+    return create_model(
+        "ResetPasswordRequest",
+        __base__=BaseModel,
+        token=(str, Field(min_length=1, max_length=256)),
+        new_password=(SecretStr, _password_field(password_config)),
+    )

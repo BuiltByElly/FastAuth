@@ -20,8 +20,9 @@ from fastauth.cookies import (
     session_cookie_kwargs,
     set_session_cookie,
 )
-from fastauth.hooks.login import LoginFailure
+from fastauth.hooks.models import LoginFailure, PasswordChanged, PasswordResetRequested
 from fastauth.routes.context import AuthContext
+from fastauth.schemas import ForgotPasswordRequest
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 
 
@@ -34,11 +35,14 @@ def register_session_routes(
     SignupRequest = ctx.signup_schema
     LoginRequest = ctx.login_schema
     UserResponse = ctx.user_response_schema
+    PasswordResetSchema = ctx.password_reset_token_schema
     DependsSession = Depends(ctx.db_session_dependency)
     cookies = ctx.config.cookies
     hasher = ctx.password_hasher
     DependsSignupLimit = Depends(ctx.rate_limiter.limit_for("/signup"))
     DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/login"))
+    DependsForgotLimit = Depends(ctx.rate_limiter.limit_for("/forgot-password"))
+    DependsResetLimit = Depends(ctx.rate_limiter.limit_for("/reset-password"))
     DependsGeneral = Depends(ctx.rate_limiter.limit())
 
     @router.post(
@@ -187,6 +191,65 @@ def register_session_routes(
         )
 
         return {"success": True, "message": "logged out"}
+
+    @router.post("/forgot-password", dependencies=[DependsForgotLimit])
+    async def forgot_password(
+        payload: ForgotPasswordRequest,
+        request: Request,
+        db_session: Annotated[Any, DependsSession],
+        bg_tasks: BackgroundTasks,
+    ):
+        """Request a password reset. Always responds the same way, to avoid
+        revealing whether an email is registered."""
+        adapter = ctx.build_adapter(db_session)
+        user = await adapter.get_user_by_email(payload.email)
+
+        if user is None:
+            # Burn comparable work so unknown vs known emails aren't
+            # distinguishable by response time (mirrors the login path's
+            # dummy-hash check).
+            verify_password("fastauth-dummy-reset-burn", DUMMY_PASSWORD_HASH, hasher)
+            return {"detail": "If that email exists, a reset link was sent."}
+
+        token = await adapter.create_password_reset_token(user)
+        await db_session.commit()
+        bg_tasks.add_task(
+            ctx.password_hooks["run_password_reset_requested"],
+            PasswordResetRequested(
+                user_id=str(user.id), email=user.email, token=token
+            ),
+            request,
+        )
+
+        return {"detail": "If that email exists, a reset link was sent."}
+
+    @router.post("/reset-password", dependencies=[DependsResetLimit])
+    async def reset_password(
+        payload: PasswordResetSchema,  # type: ignore[valid-type]
+        request: Request,
+        db_session: Annotated[Any, DependsSession],
+        bg_tasks: BackgroundTasks,
+    ):
+        """Consume a reset token and set a new password. Revokes existing
+        sessions so other devices are logged out."""
+        adapter = ctx.build_adapter(db_session)
+        user = await adapter.consume_password_reset_token(payload.token)
+
+        if user is None:
+            return JSONResponse(
+                {"detail": "Invalid or expired token."}, status_code=400
+            )
+
+        await adapter.set_password(user, payload.new_password.get_secret_value())
+        await adapter.revoke_credentials_on_password_reset(user)
+        await db_session.commit()
+
+        bg_tasks.add_task(
+            ctx.password_hooks["run_password_changed"],
+            PasswordChanged(user_id=str(user.id)),
+            request,
+        )
+        return {"detail": "Password updated."}
 
     @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
     async def me(

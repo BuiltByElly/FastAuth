@@ -19,11 +19,11 @@ class AuthContext:
 
     adapter_class: type[Adapter]
     user_model: type[Any]
-    session_model: type[Any] | None
     db_session_dependency: Callable[[], AsyncGenerator[Any]]
     signup_schema: type[BaseModel]
     login_schema: type[BaseModel]
     user_response_schema: type[BaseModel]
+    password_reset_token_schema: type[BaseModel]
     strategy: Literal["session", "jwt"]
     config: FastAuthConfig
     rate_limiter: RateLimiter
@@ -31,17 +31,21 @@ class AuthContext:
     login_hooks: dict[str, Callable[[Any, Request], Awaitable[Any]]]
     logout_hooks: dict[str, Callable[[Any], Awaitable[None]]]
     refresh_hooks: dict[str, Callable[[Any, Request], Awaitable[None]]]
-    password_hasher: PasswordHash | None = None
+    password_hooks: dict[str, Callable[[Any, Request], Awaitable[None]]]
+    password_hasher: PasswordHash
     refresh_model: type[Any] | None = None
+    session_model: type[Any] | None = None
+    password_reset_token_model: type[Any] | None = None
 
     def build_adapter(self, session: Any) -> Adapter:
         """Wrap the request's session. Sync: no I/O, cheap per-request bind."""
         return self.adapter_class(
             db_session=session,
             user_model=self.user_model,
-            session_model=self.session_model,  # type: ignore[arg-type]
+            session_model=self.session_model,
             jwt_config=self.config.jwt,
             refresh_model=self.refresh_model,
             session_expire_days=self.config.session.expire_days,
+            password_reset_token_model=self.password_reset_token_model,
             password_hasher=self.password_hasher,
         )

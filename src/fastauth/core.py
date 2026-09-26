@@ -18,9 +18,12 @@ from fastauth.dependencies.current_user import jwt_current_user, session_current
 from fastauth.dependencies.rate_limiter import RateLimiter
 from fastauth.hooks.login import LoginHooks
 from fastauth.hooks.logout import LogoutHooks
+from fastauth.hooks.password import PasswordHooks
 from fastauth.hooks.refresh import RefreshHooks
 from fastauth.hooks.signup import SignupHooks
 from fastauth.protocols import (
+    PasswordResetTokenProtocol,
+    PasswordResetTokenT,
     RefreshT,
     RefreshTokenProtocol,
     SessionProtocol,
@@ -34,6 +37,7 @@ from fastauth.routes.jwt_route import register_jwt_routes
 from fastauth.routes.session import register_session_routes
 from fastauth.schemas import (
     build_login_schema,
+    build_password_reset_token_schema,
     build_signup_schema,
     build_user_response_schema,
 )
@@ -57,6 +61,7 @@ class FastAuth:
         adapter: type[Adapter],
         db_session_dependency: Callable[[], AsyncGenerator[Any]],
         user_model: type[UserT],
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -77,8 +82,17 @@ class FastAuth:
         """
         cfg = config or FastAuthConfig()
         self.config = cfg
+
         ensure_model_compliance(user_model, UserProtocol, name="user_model")
+        if password_reset_token_model is not None:
+            ensure_model_compliance(
+                password_reset_token_model,
+                PasswordResetTokenProtocol,
+                name="password_reset_token_model",
+            )
+
         self.password_hasher = build_hasher(cfg.password.hash_schemes)
+
         if rate_limiter is not None and cfg.rate_limit != RateLimitConfig():
             warnings.warn(
                 "A rate_limiter instance was passed explicitly, so the "
@@ -98,6 +112,9 @@ class FastAuth:
         self.login_schema = build_login_schema(password_config=cfg.password)
         self.user_response_schema = build_user_response_schema(
             adapter.get_response_fields(user_model)
+        )
+        self.password_reset_token_schema = build_password_reset_token_schema(
+            password_config=cfg.password,
         )
 
         self.signup_hooks = SignupHooks(
@@ -120,14 +137,22 @@ class FastAuth:
         self.refresh_hooks = RefreshHooks()
         self.on_token_reuse_detected = self.refresh_hooks.on_token_reuse_detected
 
+        self.password_hooks = PasswordHooks()
+        self.on_password_reset_requested = (
+            self.password_hooks.on_password_reset_requested
+        )
+        self.on_password_changed = self.password_hooks.on_password_changed
+
         self.ctx = AuthContext(
             adapter_class=adapter,
             user_model=user_model,
+            password_reset_token_model=password_reset_token_model,
             session_model=None,
             db_session_dependency=db_session_dependency,
             signup_schema=self.signup_schema,
             login_schema=self.login_schema,
             user_response_schema=self.user_response_schema,
+            password_reset_token_schema=self.password_reset_token_schema,
             strategy=self.strategy,
             config=cfg,
             password_hasher=self.password_hasher,
@@ -148,6 +173,10 @@ class FastAuth:
             },
             refresh_hooks={
                 "run_token_reuse_detected": self.refresh_hooks.run_token_reuse_detected,
+            },
+            password_hooks={
+                "run_password_reset_requested": self.password_hooks.run_password_reset_requested,
+                "run_password_changed": self.password_hooks.run_password_changed,
             },
         )
         tags = tags or ["Authentication"]
@@ -173,6 +202,7 @@ class SessionAuth(FastAuth):
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
     ):
         """Bind models + session provider; mount signup/login/logout/me.
 
@@ -188,6 +218,7 @@ class SessionAuth(FastAuth):
             tags=tags,
             prefix=prefix,
             config=config,
+            password_reset_token_model=password_reset_token_model,
         )
 
         self.current_user = session_current_user(self.ctx)
@@ -215,6 +246,7 @@ class JWTAuth(FastAuth):
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
     ):
         """Bind models + session provider; mount signup/login/refresh/logout/me.
 
@@ -229,6 +261,7 @@ class JWTAuth(FastAuth):
             db_session_dependency=db_session_dependency,
             user_model=user_model,
             rate_limiter=rate_limiter,
+            password_reset_token_model=password_reset_token_model,
             tags=tags,
             prefix=prefix,
             config=config,

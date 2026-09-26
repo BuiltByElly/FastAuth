@@ -47,6 +47,8 @@ class RateLimitConfig(BaseModel):
             "/login": (10, 5),
             "/signup": (60, 3),
             "/refresh": (60, 10),
+            "/forgot-password": (60, 5),
+            "/reset-password": (60, 5),
         }
     )
 

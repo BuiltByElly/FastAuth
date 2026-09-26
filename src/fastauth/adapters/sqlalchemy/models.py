@@ -11,7 +11,7 @@ SQLModel compatibility is not officially supported/tested.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import EmailStr
 from sqlalchemy import Boolean, DateTime, String
@@ -53,6 +53,9 @@ class FastAuthUserMixin:
     email: Mapped[EmailStr] = mapped_column(String, unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    password_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
 
 class FastAuthSessionMixin:
@@ -164,13 +167,17 @@ class FastAuthPasswordResetTokensMixin:
     Inherit from this mixin (plus your declarative `Base`) in your own
     `password_reset_tokens` model. It does not define `__tablename__` and the necessary foreign key — you do.
 
+    Only the SHA-256 hex of the raw token is stored — the raw value is
+    emailed to the user once and never touches the database.
+
     Attributes:
-        id: Primary key, auto-generated `uuid.uuid7` (time-ordered UUID).
+        id: Primary key, random `uuid4` (unpredictable token-row id).
         user_id: Foreign key to the `users` table.
-        token_hash: Argon2 (or other) password hash. Never store
-            plaintext here — FastAuth hashes on register/login.
-        expires_at: Timestamp when the token expires.
-        used_at: Timestamp when the token was used, if applicable.
+        token_hash: Hex SHA-256 of the raw reset token. Unique + indexed
+            for single-row lookup; never the raw token itself.
+        expires_at: Timezone-aware expiry timestamp (15-minute lifetime).
+        used_at: Timezone-aware consumption timestamp, None while
+            outstanding. Single-use: replaying a consumed token is rejected.
 
     Example:
     ```python
@@ -188,6 +195,8 @@ class FastAuthPasswordResetTokensMixin:
     """
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    token_hash: Mapped[str]
-    expires_at: Mapped[datetime]
-    used_at: Mapped[datetime | None] = mapped_column(default=None)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True
+    )

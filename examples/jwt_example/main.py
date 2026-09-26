@@ -13,14 +13,16 @@ from fastauth import (
 from fastauth.adapters.rate_limit import SQLAlchemyRateLimiter
 from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter
 from fastauth.adapters.sqlalchemy.models import (
+    FastAuthPasswordResetTokensMixin,
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
     FastAuthUserMixin,
 )
 from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
 from fastauth.dependencies.rate_limiter import RateLimiter
+from fastauth.hooks import PasswordChanged
 from fastauth.hooks.exceptions import HookAbort
-from fastauth.hooks.login import LoginFailure
+from fastauth.hooks.models import LoginFailure, PasswordResetRequested
 
 from .database import engine, get_db
 
@@ -58,6 +60,14 @@ class RateLimitModel(Base, FastAuthRateLimitMixin):
     __tablename__ = "rate_limits"
 
 
+class PasswordResetTokenModel(Base, FastAuthPasswordResetTokensMixin):
+    """App password reset token model."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create tables on startup, dispose engine on shutdown."""
@@ -86,6 +96,7 @@ auth = JWTAuth(
     ),
     db_session_dependency=get_db,
     rate_limiter=rate_limiter,
+    password_reset_token_model=PasswordResetTokenModel,
 )
 
 app.include_router(auth.router)
@@ -93,14 +104,14 @@ app.include_router(auth.router)
 
 @auth.on_before_signup
 async def normalize_email(payload, request: Request):
-    payload.email = payload.email.upper()
+    payload.email = payload.email.lower()
     print("payload on_before_signup", payload)
     return payload
 
 
 @auth.on_before_login
 async def blocking_ip(payload, request: Request):
-    payload.email = payload.email.upper()
+    payload.email = payload.email.lower()
     if request.client is not None and request.client.host != "127.0.0.1":
         raise HookAbort(status_code=403, detail="Your IP is blocked skii")
     return payload
@@ -124,3 +135,13 @@ async def _(user_id: str):
 @auth.on_token_reuse_detected
 async def _(user_id, request: Request):
     print("token reuse detected", user_id)
+
+
+@auth.on_password_reset_requested
+async def _(data: PasswordResetRequested, request: Request):
+    print("password reset requested", data)
+
+
+@auth.on_password_changed
+async def _(data: PasswordChanged, request: Request):
+    print("password changed", data)

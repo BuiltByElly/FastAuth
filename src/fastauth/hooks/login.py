@@ -2,17 +2,12 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from fastapi import HTTPException, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from fastauth.hooks.exceptions import HookAbort
+from fastauth.hooks.models import LoginFailure
 
 logger = logging.getLogger("fastauth")
-
-
-class LoginFailure(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    user_id: str | None  # None if the account doesn't exist
-    error: str
 
 
 LoginHandler = Callable[[BaseModel, Request], Awaitable[BaseModel]]  # before: may block

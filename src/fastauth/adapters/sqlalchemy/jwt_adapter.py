@@ -9,11 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
 from fastauth.adapters.exceptions import RefreshTokenReused
+from fastauth.adapters.sqlalchemy.mixins import PasswordResetTokenAdapterMixin
 from fastauth.config import JWTConfig
-from fastauth.protocols import SessionT, UserT
+from fastauth.protocols import RefreshT, SessionT, UserT
 from fastauth.security import hash_password
 
-from .models import FastAuthRefreshTokenMixin
+from .models import FastAuthPasswordResetTokensMixin, FastAuthRefreshTokenMixin
 
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
@@ -29,7 +30,7 @@ def _tagged_fields(model: type, flag: str) -> dict[str, tuple[type, Any]]:
     return fields
 
 
-class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
+class SQLAlchemyJWTAdapter(PasswordResetTokenAdapterMixin, Adapter[UserT, SessionT]):
     """Stateless credentials: signed JWT access tokens, no session rows.
 
     Tokens carry ``sub`` (user id), ``exp``/``iat``, a ``jti``, and a
@@ -44,9 +45,11 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         user_model: type[UserT],
         session_model: type[SessionT] | None = None,
         jwt_config: JWTConfig | None = None,
-        refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
+        refresh_model: type[RefreshT] | None = None,
         session_expire_days: int = 7,
         password_hasher: PasswordHash | None = None,
+        password_reset_token_model: type[FastAuthPasswordResetTokensMixin]
+        | None = None,
     ):
         """Bind a request session plus the app's User model (no sessions)."""
         super().__init__(
@@ -57,6 +60,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             refresh_model,
             session_expire_days,
             password_hasher,
+            password_reset_token_model,
         )
 
     @classmethod
@@ -105,9 +109,9 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         cfg = self._require_config()
         now = datetime.now(UTC)
         payload = {
-            "sub": str(user.id),
+            "sub": str(user.id),  # type:ignore
             "exp": now + expires_delta,
-            "iat": now,
+            "iat": now.timestamp(),
             "jti": uuid.uuid4().hex,
             "type": token_type,
         }
@@ -147,11 +151,27 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             return None
         try:
             user_id = uuid.UUID(str(payload["sub"]))
-        except ValueError, AttributeError, TypeError:
+            iat_raw = payload["iat"]
+        except ValueError, AttributeError, TypeError, KeyError:
             return None
         user = await self.get_user_by_id(user_id)
-        if user is None or not user.is_active:
+        if user is None or not user.is_active:  # type:ignore
             return None
+
+        pwd_changed = user.password_changed_at  # type:ignore
+        if pwd_changed is not None:
+            if pwd_changed.tzinfo is None:
+                pwd_changed = pwd_changed.replace(tzinfo=UTC)
+            try:
+                iat_ts = (
+                    iat_raw.timestamp()
+                    if isinstance(iat_raw, datetime)
+                    else float(iat_raw)
+                )
+            except ValueError, TypeError, AttributeError:
+                return None
+            if iat_ts < pwd_changed.timestamp():
+                return None
         return user
 
     async def revoke_credential(self, token: str) -> str | None:
@@ -162,7 +182,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         if self.refresh_model is None:
             msg = "SQLAlchemyJWTAdapter requires refresh_model (pass via FastAuth)."
             raise ValueError(msg)
-        return self.refresh_model
+        return self.refresh_model  # type: ignore[return-value]
 
     async def _revoke_refresh_family(self, user_id: uuid.UUID) -> bool:
         """Stamp revoked_at on every refresh row for a user (reuse defense)."""
@@ -202,7 +222,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
         jti = uuid.uuid4()
         token = jwt.encode(
             {
-                "sub": str(user.id),
+                "sub": str(user.id),  # type: ignore[literal-required]
                 "exp": expires_at,
                 "iat": now,
                 "jti": jti.hex,
@@ -267,7 +287,7 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             return None
 
         user = await self.get_user_by_id(row.user_id)
-        if user is None or not user.is_active:
+        if user is None or not user.is_active:  # type: ignore[literal-required]
             return None
 
         row.used_at = datetime.now(UTC)
@@ -302,3 +322,15 @@ class SQLAlchemyJWTAdapter(Adapter[UserT, SessionT]):
             row.revoked_at = datetime.now(UTC)
             await self.db_session.flush()
         return user_id
+
+    def require_password_reset_model(
+        self,
+    ) -> type[FastAuthPasswordResetTokensMixin]:
+        if self.password_reset_token_model is None:
+            raise ValueError("password_reset_token_model is required")
+        return self.password_reset_token_model  # type: ignore[return-value]
+
+    async def revoke_credentials_on_password_reset(self, user: UserT) -> None:
+        user.password_changed_at = datetime.now(UTC)  # type: ignore[attr-defined]
+        await self._revoke_refresh_family(uuid.UUID(str(user.id)))  # type: ignore[arg-type]
+        await self.db_session.flush()
