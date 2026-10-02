@@ -22,8 +22,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      - name: Lint check with ruff
-        run: uv run ruff check
+      - name: Explicitly provision Ruff
+        run: |
+          uv tool install ruff #
+          uvx ruff check .
+
 
       - name: Run tests with coverage
         run: >
