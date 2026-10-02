@@ -2,14 +2,49 @@ import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select, update
 
 from fastauth.adapters import Adapter
-from fastauth.protocols import UserT
+from fastauth.protocols import OIDCAccountT, UserT
+from fastauth.schemas import OIDCUserInfo
 
 
-class PasswordResetTokenAdapterMixin(Adapter[UserT, Any]):
+class OIDCAccountAdapterMixin(Adapter[UserT, OIDCAccountT, Any]):
+    async def get_oidc_account(
+        self, provider: str, provider_user_id: str
+    ) -> OIDCAccountT | None:
+        model = self.require_oidc_account_model()
+        result = await self.db_session.execute(
+            select(model).where(
+                model.provider == provider,
+                model.provider_user_id == provider_user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_user_from_oidc(self, user_info: OIDCUserInfo) -> UserT:
+        user = self.user_model(
+            email=user_info.email,  # type: ignore
+            is_active=True,  # type: ignore
+        )
+        self.db_session.add(user)
+        await self.db_session.flush()
+
+        model = self.require_oidc_account_model()
+        account = model(
+            user_id=user.id,  # type: ignore
+            provider=user_info.provider,
+            provider_user_id=user_info.provider_user_id,
+        )
+        self.db_session.add(account)
+        await self.db_session.flush()
+
+        return user
+
+
+class PasswordResetTokenAdapterMixin(Adapter[UserT, Any, Any]):
     """Shared reset-token logic. Works for either strategy — relies only
     on `require_password_reset_model()` and `get_user_by_id()`, which
     every concrete adapter already provides."""

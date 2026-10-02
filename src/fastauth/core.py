@@ -21,7 +21,10 @@ from fastauth.hooks.logout import LogoutHooks
 from fastauth.hooks.password import PasswordHooks
 from fastauth.hooks.refresh import RefreshHooks
 from fastauth.hooks.signup import SignupHooks
+from fastauth.oauth.oidc import OIDCProvider, OIDCStateManager
 from fastauth.protocols import (
+    OIDCAccountProtocol,
+    OIDCAccountT,
     PasswordResetTokenProtocol,
     PasswordResetTokenT,
     RefreshT,
@@ -32,8 +35,9 @@ from fastauth.protocols import (
     UserT,
     ensure_model_compliance,
 )
-from fastauth.routes.context import AuthContext
+from fastauth.routes.context import AuthContext, OIDCContext
 from fastauth.routes.jwt_route import register_jwt_routes
+from fastauth.routes.oidc_route import register_oidc_routes
 from fastauth.routes.session import register_session_routes
 from fastauth.schemas import (
     build_login_schema,
@@ -291,3 +295,110 @@ class JWTAuth(FastAuth):
                     logger.info("purged %d refresh tokens", deleted)
         """
         return await self.ctx.build_adapter(session).purge_expired_refresh_tokens()
+
+
+class OIDCAuth(FastAuth):
+    """OIDC login (Google, Microsoft, etc.) — issues credentials via its
+    own adapter, same call shape as SessionAuth/JWTAuth's login route.
+
+    Deliberately skips `FastAuth.__init__` — none of the password/signup
+    machinery there (hashers, signup/login/password hooks) applies to
+    OIDC. Only the pieces actually shared (ctx, router, adapter binding)
+    are rebuilt here by hand.
+    """
+
+    strategy: Literal["session", "jwt"]
+
+    def __init__(
+        self,
+        adapter: type[Adapter],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserT],
+        oidc_account_model: type[OIDCAccountT],
+        strategy: Literal["session", "jwt"],
+        session_model: type[SessionT] | None = None,
+        refresh_model: type[RefreshT] | None = None,
+        tags: list[str | Enum] | None = None,
+        prefix: str = "/auth/oidc",
+        config: FastAuthConfig | None = None,
+        rate_limiter: RateLimiter | None = None,
+    ):
+        cfg = config or FastAuthConfig()
+        if cfg.oidc is None:
+            msg = "OIDCAuth requires config.oidc (pass FastAuthConfig with oidc=OIDCConfig(...))."
+            raise ValueError(msg)
+
+        ensure_model_compliance(user_model, UserProtocol, name="user_model")
+        ensure_model_compliance(
+            oidc_account_model, OIDCAccountProtocol, name="oidc_account_model"
+        )
+
+        if strategy == "session" and session_model is None:
+            msg = "OIDCAuth strategy='session' requires session_model."
+            raise ValueError(msg)
+
+        if strategy == "jwt" and refresh_model is None:
+            msg = "OIDCAuth strategy='jwt' requires refresh_model."
+            raise ValueError(msg)
+
+        if strategy == "session" and session_model is not None:
+            ensure_model_compliance(
+                session_model, SessionProtocol, name="session_model"
+            )
+
+        if strategy == "jwt" and refresh_model is not None:
+            ensure_model_compliance(
+                refresh_model, RefreshTokenProtocol, name="refresh_model"
+            )
+
+        self.user_response_schema = build_user_response_schema(
+            adapter.get_response_fields(user_model)
+        )
+        self.config = cfg
+        self.strategy = strategy
+        self.rate_limiter = rate_limiter or RateLimiter(
+            rate_limit_config=cfg.rate_limit
+        )
+
+        self.state_manager = OIDCStateManager(secret_key=cfg.oidc.secret_key)
+        self.providers: dict[str, OIDCProvider] = {
+            p.name: OIDCProvider(
+                name=p.name,
+                client_id=p.client_id,
+                client_secret=p.client_secret,
+                metadata_url=str(p.metadata_url),
+                scope=" ".join(p.scopes),
+                extra_authorize_params=p.extra_authorize_params,
+            )
+            for p in cfg.oidc.providers
+        }
+
+        self.login_hooks = LoginHooks(
+            schema=None,
+        )
+        self.on_after_login = self.login_hooks.on_after_login
+
+        self.ctx = OIDCContext(
+            adapter_class=adapter,
+            user_model=user_model,
+            session_model=session_model,
+            refresh_model=refresh_model,
+            db_session_dependency=db_session_dependency,
+            strategy=self.strategy,
+            config=cfg,
+            state_manager=self.state_manager,
+            providers=self.providers,
+            oidc_account_model=oidc_account_model,
+            rate_limiter=self.rate_limiter,
+            login_hooks={"run_after_login": self.login_hooks.run_after_login},
+        )
+
+        self.current_user = (
+            jwt_current_user(self.ctx)
+            if self.strategy == "jwt"
+            else session_current_user(self.ctx)
+        )
+
+        tags = tags or [p.name for p in cfg.oidc.providers]
+        self.router = APIRouter(prefix=prefix, tags=tags)
+        register_oidc_routes(self.router, self.ctx)

@@ -8,6 +8,16 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, create_m
 from fastauth.config import PasswordConfig
 
 
+class OIDCUserInfo(BaseModel):
+    provider: str  # "google", "microsoft", etc.
+    provider_user_id: str  # stable ID from that provider ("sub" for OIDC)
+    email: str | None
+    email_verified: bool
+    name: str | None
+    avatar_url: str | None
+    others: dict[str, Any] | None = None
+
+
 class SignupBase(BaseModel):
     """Core fields every signup requires, regardless of dev extras."""
 

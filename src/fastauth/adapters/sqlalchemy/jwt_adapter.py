@@ -9,9 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import Adapter
 from fastauth.adapters.exceptions import RefreshTokenReused
-from fastauth.adapters.sqlalchemy.mixins import PasswordResetTokenAdapterMixin
+from fastauth.adapters.sqlalchemy.mixins import (
+    OIDCAccountAdapterMixin,
+    PasswordResetTokenAdapterMixin,
+)
 from fastauth.config import JWTConfig
-from fastauth.protocols import RefreshT, SessionT, UserT
+from fastauth.protocols import OIDCAccountT, RefreshT, SessionT, UserT
 from fastauth.security import hash_password
 
 from .models import FastAuthPasswordResetTokensMixin, FastAuthRefreshTokenMixin
@@ -30,7 +33,11 @@ def _tagged_fields(model: type, flag: str) -> dict[str, tuple[type, Any]]:
     return fields
 
 
-class SQLAlchemyJWTAdapter(PasswordResetTokenAdapterMixin, Adapter[UserT, SessionT]):
+class SQLAlchemyJWTAdapter(
+    PasswordResetTokenAdapterMixin,
+    OIDCAccountAdapterMixin,
+    Adapter[UserT, SessionT, Any],
+):
     """Stateless credentials: signed JWT access tokens, no session rows.
 
     Tokens carry ``sub`` (user id), ``exp``/``iat``, a ``jti``, and a
@@ -50,6 +57,7 @@ class SQLAlchemyJWTAdapter(PasswordResetTokenAdapterMixin, Adapter[UserT, Sessio
         password_hasher: PasswordHash | None = None,
         password_reset_token_model: type[FastAuthPasswordResetTokensMixin]
         | None = None,
+        oidc_account_model: type[OIDCAccountT] | None = None,
     ):
         """Bind a request session plus the app's User model (no sessions)."""
         super().__init__(
@@ -61,6 +69,7 @@ class SQLAlchemyJWTAdapter(PasswordResetTokenAdapterMixin, Adapter[UserT, Sessio
             session_expire_days,
             password_hasher,
             password_reset_token_model,
+            oidc_account_model,
         )
 
     @classmethod
@@ -71,7 +80,18 @@ class SQLAlchemyJWTAdapter(PasswordResetTokenAdapterMixin, Adapter[UserT, Sessio
     @classmethod
     def get_response_fields(cls, model: type) -> dict[str, tuple[type, Any]]:
         """Columns tagged fastauth_returned=True."""
-        return _tagged_fields(model, "fastauth_returned")
+
+        def _(model: type, flag: str) -> dict[str, tuple[type, Any]]:
+            """Columns the dev opted in via fastauth info flags. Untagged skipped."""
+            fields = {}
+            for col in inspect(model).columns:
+                if not col.info.get(flag, False):
+                    continue
+                python_type = col.type.python_type
+                fields[col.key] = (python_type | None, None)
+            return fields
+
+        return _(model, "fastauth_returned")
 
     async def get_user_by_email(self, email: str) -> UserT | None:
         """Find a user by email, or None."""
@@ -329,6 +349,13 @@ class SQLAlchemyJWTAdapter(PasswordResetTokenAdapterMixin, Adapter[UserT, Sessio
         if self.password_reset_token_model is None:
             raise ValueError("password_reset_token_model is required")
         return self.password_reset_token_model  # type: ignore[return-value]
+
+    def require_oidc_account_model(
+        self,
+    ) -> type[OIDCAccountT]:
+        if self.oidc_account_model is None:
+            raise ValueError("oidc_account_model is required")
+        return self.oidc_account_model
 
     async def revoke_credentials_on_password_reset(self, user: UserT) -> None:
         user.password_changed_at = datetime.now(UTC)  # type: ignore[attr-defined]

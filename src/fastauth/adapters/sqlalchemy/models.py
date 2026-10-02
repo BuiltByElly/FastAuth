@@ -51,7 +51,7 @@ class FastAuthUserMixin:
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     email: Mapped[EmailStr] = mapped_column(String, unique=True, index=True)
-    hashed_password: Mapped[str] = mapped_column(String)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     password_changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
@@ -200,3 +200,36 @@ class FastAuthPasswordResetTokensMixin:
     used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None, nullable=True
     )
+
+
+class FastAuthOIDCAccountMixin:
+    """Links one OIDC identity to one of your users. Does not define
+    `__tablename__`, `user_id`, or the unique constraint — you do.
+
+    Example:
+    ```python
+    import uuid
+    from sqlalchemy import ForeignKey, UniqueConstraint
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+    from fastauth.adapters.sqlalchemy.models import FastAuthOIDCAccountMixin
+
+    class Base(DeclarativeBase):
+        pass
+
+    class OIDCAccount(Base, FastAuthOIDCAccountMixin):
+        __tablename__ = "oidc_accounts"
+
+        # Required: link each token back to a user.
+        # Replace "users.id" with your actual user table name if different.
+        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+
+        __table_args__ = (
+                UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_account"), # mandatory
+                UniqueConstraint("provider", "user_id", name="uq_oauth_provider_per_user"),  # optional
+            )
+    ```
+    """
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str]
+    provider_user_id: Mapped[str]

@@ -246,7 +246,7 @@ def register_jwt_routes(
         clear_refresh_cookie(
             response, name=cookies.refresh_cookie_name, **clear_cookie_kwargs(cookies)
         )
-        return {"message": "logged out"}
+        return {"success": True, "message": "Logged out successfully"}
 
     @router.post("/forgot-password", dependencies=[DependsForgotLimit])
     async def forgot_password(
@@ -271,9 +271,7 @@ def register_jwt_routes(
         await db_session.commit()
         bg_tasks.add_task(
             ctx.password_hooks["run_password_reset_requested"],
-            PasswordResetRequested(
-                user_id=str(user.id), email=user.email, token=token
-            ),
+            PasswordResetRequested(user_id=str(user.id), email=user.email, token=token),
             request,
         )
 

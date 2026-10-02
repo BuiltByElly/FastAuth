@@ -73,6 +73,16 @@ class PasswordResetTokenProtocol(Protocol):
     used_at: datetime | None
 
 
+@runtime_checkable
+class OIDCAccountProtocol(Protocol):
+    """Anything FastAuth can use as an OIDC account row."""
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    provider: str
+    provider_user_id: str
+
+
 # Unbound type variables for positions that accept *any* backend's model
 # (e.g. ``user_model: type[UserT]`` on constructors). They are deliberately
 # NOT bound to the protocols above: SQLAlchemy ``Mapped[...]`` attributes
@@ -84,6 +94,7 @@ SessionT = TypeVar("SessionT")
 RefreshT = TypeVar("RefreshT")
 RateLimitT = TypeVar("RateLimitT")
 PasswordResetTokenT = TypeVar("PasswordResetTokenT")
+OIDCAccountT = TypeVar("OIDCAccountT")
 
 
 def _required_attributes(protocol: type) -> tuple[str, ...]:

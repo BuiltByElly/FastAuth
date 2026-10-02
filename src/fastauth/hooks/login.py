@@ -28,7 +28,7 @@ class LoginHooks:
             instances of it, and every result is re-validated against it.
     """
 
-    def __init__(self, schema: type[BaseModel]):
+    def __init__(self, schema: type[BaseModel] | None):
         self._schema = schema
         self._before_login: list[LoginHandler] = []
         self._login_failure: list[LoginFailureHandler] = []
@@ -50,7 +50,7 @@ class LoginHooks:
         """Register an observer that runs after a failed login.
 
         Receives a ``LoginFailure`` and the ``Request``, and returns nothing.
-        It cannot change the response. Exceptions are logged and ignored.
+        It cannot change the response. Exceptions are logged at logger `fastauth` and ignored.
 
         ```python
         class LoginFailure(BaseModel):
@@ -64,10 +64,18 @@ class LoginHooks:
         return fn
 
     def on_after_login(self, fn: LoginSuccessHandler) -> LoginSuccessHandler:
-        """Register an observer that runs after a successful login.
+        """Register an observer to run after a successful login.
 
-        Receives the user (an instance of the response schema) and the
-        ``Request``, and returns nothing. Exceptions are logged and ignored.
+        Receives ``(user, request)``, where ``user`` is either the
+        response-schema instance (password login) or the resolved
+        ``OAuthUserInfo`` (OIDC login) — check which you got if your
+        handler needs to branch on login method. Returns nothing.
+
+        Runs as a background task after the response is sent and the DB
+        transaction is committed — there is no request-scoped DB session
+        available here, so open your own if you need to write anything.
+        Raised exceptions are logged and otherwise ignored; they never
+        affect the response already sent to the client.
         """
         self._after_login.append(fn)
         return fn
@@ -87,7 +95,8 @@ class LoginHooks:
         for fn in self._before_login:
             try:
                 result = await fn(payload, request)
-                payload = self._schema.model_validate(result.model_dump())
+                if self._schema is not None:
+                    payload = self._schema.model_validate(result.model_dump())
             except HookAbort:
                 raise  # intentional block, pass through
             except Exception:
