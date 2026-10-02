@@ -4,8 +4,15 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+)
+from fastapi.responses import JSONResponse
 
 from fastauth.cookies import (
     clear_cookie_kwargs,
@@ -13,25 +20,29 @@ from fastauth.cookies import (
     session_cookie_kwargs,
     set_session_cookie,
 )
-from fastauth.models import FastAuthUserMixin
+from fastauth.hooks.models import LoginFailure, PasswordChanged, PasswordResetRequested
 from fastauth.routes.context import AuthContext
+from fastauth.schemas import ForgotPasswordRequest
 from fastauth.security import DUMMY_PASSWORD_HASH, verify_password
 
 
 def register_session_routes(
     router: APIRouter,
     ctx: AuthContext,
-    current_user: Callable[..., Awaitable[FastAuthUserMixin]],
+    current_user: Callable[..., Awaitable[Any]],
 ) -> None:
     """Mount signup/login/logout/me using session rows vía the adapter."""
     SignupRequest = ctx.signup_schema
     LoginRequest = ctx.login_schema
     UserResponse = ctx.user_response_schema
+    PasswordResetSchema = ctx.password_reset_token_schema
     DependsSession = Depends(ctx.db_session_dependency)
     cookies = ctx.config.cookies
     hasher = ctx.password_hasher
     DependsSignupLimit = Depends(ctx.rate_limiter.limit_for("/signup"))
     DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/login"))
+    DependsForgotLimit = Depends(ctx.rate_limiter.limit_for("/forgot-password"))
+    DependsResetLimit = Depends(ctx.rate_limiter.limit_for("/reset-password"))
     DependsGeneral = Depends(ctx.rate_limiter.limit())
 
     @router.post(
@@ -39,45 +50,106 @@ def register_session_routes(
     )
     async def signup(
         payload: SignupRequest,  # type: ignore[valid-type]
-        db_session: Annotated[AsyncSession, DependsSession],
+        db_session: Annotated[Any, DependsSession],
         response: Response,
+        request: Request,
+        bg_tasks: BackgroundTasks,
     ):
         """Create a user unless the email is taken."""
+
+        # Before signup, run the `run_before_signup` hook -> validated payload
+        payload = await ctx.signup_hooks["run_before_signup"](payload, request)
+
         adapter = ctx.build_adapter(db_session)
         if await adapter.get_user_by_email(payload.email):  # type: ignore[attr-defined]
-            raise HTTPException(status_code=400, detail="Email already registered.")
-        user = await adapter.create_user(payload.model_dump())
-        record: Any = await adapter.issue_credential(user)
-        await db_session.commit()
-        expires_at = record.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-        max_age = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
-        set_session_cookie(
-            response, str(record.id), **session_cookie_kwargs(cookies, max_age=max_age)
-        )
-        await db_session.commit()
-        return user
+            bg_tasks.add_task(
+                ctx.signup_hooks["run_signup_failure"],
+                "User's email already exists",
+                request,
+            )
+            return JSONResponse(
+                {"detail": "Email already registered"},
+                status_code=400,
+                background=bg_tasks,
+            )
+        try:
+            user = await adapter.create_user(payload.model_dump())
+            record: Any = await adapter.issue_credential(user)
+            await db_session.commit()
+            expires_at = record.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            max_age = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
+            set_session_cookie(
+                response,
+                str(record.id),
+                **session_cookie_kwargs(cookies, max_age=max_age),
+            )
+
+            # Run the after-signup hook (fire and forget)
+            user_out = UserResponse.model_validate(user)
+            bg_tasks.add_task(ctx.signup_hooks["run_after_signup"], user_out, request)  # type:ignore
+            return user
+        except Exception as e:
+            await db_session.rollback()
+            bg_tasks.add_task(ctx.signup_hooks["run_signup_failure"], str(e), request)
+            raise
 
     @router.post("/login", dependencies=[DependsLoginLimit])
     async def login(
         payload: LoginRequest,  # type: ignore[valid-type]
         response: Response,
         request: Request,
-        db_session: Annotated[AsyncSession, DependsSession],
+        db_session: Annotated[Any, DependsSession],
+        bg_tasks: BackgroundTasks,
     ):
         """Verify credentials, rotate any existing session, issue a new one."""
+
+        # Before login, run the `run_before_login` hook -> validated payload
+        payload = await ctx.login_hooks["run_before_login"](payload, request)
+
         adapter = ctx.build_adapter(db_session)
         user = await adapter.get_user_by_email(payload.email)
+
+        # Run the login failure hook (fire and forget)
         if user is None:
             verify_password(payload.password, DUMMY_PASSWORD_HASH, hasher)
-            raise HTTPException(status_code=401, detail="Invalid credentials.")
+            bg_tasks.add_task(
+                ctx.login_hooks["run_login_failure"],
+                LoginFailure(user_id=None, error="User not found"),
+                request,
+            )
+            return JSONResponse(
+                {"detail": "Invalid credentials."},
+                status_code=401,
+                background=bg_tasks,
+            )
 
         if not verify_password(payload.password, user.hashed_password, hasher):
-            raise HTTPException(status_code=401, detail="Invalid credentials.")
+            bg_tasks.add_task(
+                ctx.login_hooks["run_login_failure"],
+                # user_id stays None even though the account exists: failure
+                # observers must not become an account-enumeration oracle.
+                LoginFailure(user_id=None, error="Invalid credentials."),
+                request,
+            )
+            return JSONResponse(
+                {"detail": "Invalid credentials."},
+                status_code=401,
+                background=bg_tasks,
+            )
 
         if not user.is_active:
-            raise HTTPException(status_code=403, detail="Account is inactive.")
+            bg_tasks.add_task(
+                ctx.login_hooks["run_login_failure"],
+                LoginFailure(user_id=str(user.id), error="Account is inactive."),
+                request,
+            )
+            return JSONResponse(
+                {"detail": "Account is inactive."},
+                status_code=403,
+                background=bg_tasks,
+            )
 
         old_token = request.cookies.get(cookies.session_cookie_name)
 
@@ -93,29 +165,93 @@ def register_session_routes(
         set_session_cookie(
             response, str(record.id), **session_cookie_kwargs(cookies, max_age=max_age)
         )
+
+        # Run the after-login hook (fire and forget)
+        user_out = UserResponse.model_validate(user)
+        bg_tasks.add_task(ctx.login_hooks["run_after_login"], user_out, request)  # type:ignore
         return {"success": True, "message": "Logged in successfully"}
 
     @router.post("/logout")
     async def logout(
         response: Response,
         request: Request,
-        db_session: Annotated[AsyncSession, DependsSession],
-        current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
+        db_session: Annotated[Any, DependsSession],
+        bg_tasks: BackgroundTasks,
     ):
         """Revoke the cookie (or bearer) session id and clear the cookie."""
         token = request.cookies.get(cookies.session_cookie_name)
         if token is None:
             raise HTTPException(status_code=401, detail="Missing session.")
-        await ctx.build_adapter(db_session).revoke_credential(token)
+        user_id = await ctx.build_adapter(db_session).revoke_credential(token)
+        if user_id is not None:
+            bg_tasks.add_task(ctx.logout_hooks["run_after_logout"], user_id)
         await db_session.commit()
         clear_session_cookie(
             response, name=cookies.session_cookie_name, **clear_cookie_kwargs(cookies)
         )
-        return {"success": True, "message": "logged out"}
+
+        return {"success": True, "message": "Logged out successfully"}
+
+    @router.post("/forgot-password", dependencies=[DependsForgotLimit])
+    async def forgot_password(
+        payload: ForgotPasswordRequest,
+        request: Request,
+        db_session: Annotated[Any, DependsSession],
+        bg_tasks: BackgroundTasks,
+    ):
+        """Request a password reset. Always responds the same way, to avoid
+        revealing whether an email is registered."""
+        adapter = ctx.build_adapter(db_session)
+        user = await adapter.get_user_by_email(payload.email)
+
+        if user is None:
+            # Burn comparable work so unknown vs known emails aren't
+            # distinguishable by response time (mirrors the login path's
+            # dummy-hash check).
+            verify_password("fastauth-dummy-reset-burn", DUMMY_PASSWORD_HASH, hasher)
+            return {"detail": "If that email exists, a reset link was sent."}
+
+        token = await adapter.create_password_reset_token(user)
+        await db_session.commit()
+        bg_tasks.add_task(
+            ctx.password_hooks["run_password_reset_requested"],
+            PasswordResetRequested(user_id=str(user.id), email=user.email, token=token),
+            request,
+        )
+
+        return {"detail": "If that email exists, a reset link was sent."}
+
+    @router.post("/reset-password", dependencies=[DependsResetLimit])
+    async def reset_password(
+        payload: PasswordResetSchema,  # type: ignore[valid-type]
+        request: Request,
+        db_session: Annotated[Any, DependsSession],
+        bg_tasks: BackgroundTasks,
+    ):
+        """Consume a reset token and set a new password. Revokes existing
+        sessions so other devices are logged out."""
+        adapter = ctx.build_adapter(db_session)
+        user = await adapter.consume_password_reset_token(payload.token)
+
+        if user is None:
+            return JSONResponse(
+                {"detail": "Invalid or expired token."}, status_code=400
+            )
+
+        await adapter.set_password(user, payload.new_password.get_secret_value())
+        await adapter.revoke_credentials_on_password_reset(user)
+        await db_session.commit()
+
+        bg_tasks.add_task(
+            ctx.password_hooks["run_password_changed"],
+            PasswordChanged(user_id=str(user.id)),
+            request,
+        )
+        return {"detail": "Password updated."}
 
     @router.get("/me", response_model=UserResponse, dependencies=[DependsGeneral])
     async def me(
-        current_user: Annotated[FastAuthUserMixin, Depends(current_user)],
+        current_user: Annotated[Any, Depends(current_user)],
     ):
         """Return the user behind the cookie (or bearer) session id."""
         return current_user

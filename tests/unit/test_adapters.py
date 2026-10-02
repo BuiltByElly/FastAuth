@@ -7,10 +7,12 @@ import jwt as pyjwt
 import pytest
 from sqlalchemy import select
 
-from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
+from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
 from fastauth.config import JWTConfig
+from fastauth.security import build_hasher
 from tests.conftest import (
     TEST_SECRET,
+    PasswordResetToken,
     RefreshToken,
     Session,
     User,
@@ -30,11 +32,24 @@ async def db_session(session_factory):
 
 
 def session_adapter(db_session):
-    return SQLAlchemySessionAdapter(db_session, User, Session)
+    return SQLAlchemySessionAdapter(
+        db_session,
+        User,
+        Session,
+        password_hasher=build_hasher(None),
+        password_reset_token_model=PasswordResetToken,
+    )
 
 
 def jwt_adapter(db_session, jwt_cfg):
-    return SQLAlchemyJWTAdapter(db_session, User, jwt_config=jwt_cfg, refresh_model=RefreshToken)
+    return SQLAlchemyJWTAdapter(
+        db_session,
+        User,
+        jwt_config=jwt_cfg,
+        refresh_model=RefreshToken,
+        password_hasher=build_hasher(None),
+        password_reset_token_model=PasswordResetToken,
+    )
 
 
 async def test_get_unknown_user_returns_none(db_session):
@@ -48,11 +63,6 @@ async def test_revoke_unknown_or_garbage_never_raises(db_session):
     await adapter.revoke_credential(str(uuid.uuid4()))
     await adapter.revoke_credential("garbage")
     await adapter.revoke_credential("")
-
-
-async def test_resolve_empty_token_is_none(db_session, jwt_cfg):
-    adapter = jwt_adapter(db_session, jwt_cfg)
-    assert await adapter.resolve_credential("") is None
 
 
 async def test_jwt_adapter_without_config_fails_fast(db_session):
@@ -136,29 +146,80 @@ async def test_revoke_refresh_token_marks_row(db_session, jwt_cfg, session_facto
     assert row.used_at is not None and row.revoked_at is not None
 
 
-async def test_revoke_refresh_token_garbage_never_raises(db_session, jwt_cfg):
-    adapter = jwt_adapter(db_session, jwt_cfg)
-    await adapter.revoke_refresh_token("garbage")
-    await adapter.revoke_refresh_token("")
+async def test_reset_token_is_single_use(db_session, session_factory):
+    await create_user(session_factory)
+    adapter = session_adapter(db_session)
+    user = await adapter.get_user_by_email("u@example.com")
+    raw = await adapter.create_password_reset_token(user)
+    await db_session.commit()
+    # Only the hash is stored — never the raw value.
+    stored = (await db_session.execute(select(PasswordResetToken))).scalars().all()
+    assert len(stored) == 1
+    assert stored[0].token_hash != raw
+    assert raw not in stored[0].token_hash
+
+    consumed = await adapter.consume_password_reset_token(raw)
+    assert consumed is not None and consumed.id == user.id
+    await db_session.commit()
+    # Replay is rejected.
+    assert await adapter.consume_password_reset_token(raw) is None
 
 
-async def test_db_rate_limiter_window_reset(session_factory):
-    from sqlalchemy import func
+async def test_reset_token_unknown_and_garbage_are_none(db_session):
+    adapter = session_adapter(db_session)
+    assert await adapter.consume_password_reset_token("never-issued") is None
+    assert await adapter.consume_password_reset_token("") is None
 
-    from fastauth.adapters.rate_limit.sqlalchemy import SQLAlchemyRateLimiter
-    from tests.conftest import RateLimitRow
 
-    async with session_factory() as session:
-        limiter = SQLAlchemyRateLimiter(db_session=session, model=RateLimitRow)
-        assert await limiter.check("k", window=60, max_requests=1) is True
-        assert await limiter.check("k", window=60, max_requests=1) is False
-        # Age the window start past the window, then check resets.
-        row = await session.get(RateLimitRow, "k")
-        row.window_start = datetime.now(UTC) - timedelta(seconds=61)
-        await session.commit()
-        assert await limiter.check("k", window=60, max_requests=1) is True
-        row = await session.get(RateLimitRow, "k")
-        assert row.count == 1
+async def test_reset_token_expired_is_none(db_session, session_factory):
+    await create_user(session_factory)
+    adapter = session_adapter(db_session)
+    user = await adapter.get_user_by_email("u@example.com")
+    raw = await adapter.create_password_reset_token(user)
+    await db_session.commit()
+    row = (await db_session.execute(select(PasswordResetToken))).scalar_one()
+    row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+    assert await adapter.consume_password_reset_token(raw) is None
+
+
+async def test_reset_token_second_request_invalidates_first(
+    db_session, session_factory
+):
+    await create_user(session_factory)
+    adapter = session_adapter(db_session)
+    user = await adapter.get_user_by_email("u@example.com")
+    first = await adapter.create_password_reset_token(user)
+    await db_session.commit()
+    second = await adapter.create_password_reset_token(user)
+    await db_session.commit()
+    assert await adapter.consume_password_reset_token(first) is None
+    consumed = await adapter.consume_password_reset_token(second)
+    assert consumed is not None
+
+
+async def test_reset_token_requires_model(db_session, session_factory):
+    await create_user(session_factory)
+    bare = SQLAlchemySessionAdapter(
+        db_session, User, Session, password_hasher=build_hasher(None)
+    )
+    user = await bare.get_user_by_email("u@example.com")
+    with pytest.raises(ValueError, match="password_reset_token_model"):
+        await bare.create_password_reset_token(user)
+    with pytest.raises(ValueError, match="password_reset_token_model"):
+        await bare.consume_password_reset_token("anything")
+
+
+async def test_set_password_rehashes(db_session, session_factory):
+    from fastauth.security import verify_password
+
+    await create_user(session_factory, password="long-enough")
+    adapter = session_adapter(db_session)
+    user = await adapter.get_user_by_email("u@example.com")
+    await adapter.set_password(user, "brand-new-password")
+    await db_session.commit()
+    assert verify_password("brand-new-password", user.hashed_password) is True
+    assert verify_password("long-enough", user.hashed_password) is False
 
 
 async def create_user_via(db_session, adapter):

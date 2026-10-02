@@ -11,11 +11,12 @@ SQLModel compatibility is not officially supported/tested.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import EmailStr
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
+from uuid6 import uuid7
 
 
 class FastAuthUserMixin:
@@ -35,7 +36,7 @@ class FastAuthUserMixin:
     Example:
     ```python
     from sqlalchemy.orm import DeclarativeBase
-    from fastauth.models import FastAuthUserMixin
+    from fastauth.adapters.sqlalchemy.models import FastAuthUserMixin
 
     class Base(DeclarativeBase):
         pass
@@ -48,10 +49,13 @@ class FastAuthUserMixin:
     ```
     """
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
     email: Mapped[EmailStr] = mapped_column(String, unique=True, index=True)
-    hashed_password: Mapped[str] = mapped_column(String)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    password_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
 
 class FastAuthSessionMixin:
@@ -74,7 +78,7 @@ class FastAuthSessionMixin:
     import uuid
     from sqlalchemy import ForeignKey
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-    from fastauth.models import FastAuthSessionMixin
+    from fastauth.adapters.sqlalchemy.models import FastAuthSessionMixin
 
     class Base(DeclarativeBase):
         pass
@@ -122,7 +126,7 @@ class FastAuthRefreshTokenMixin:
     import uuid
     from sqlalchemy import ForeignKey
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-    from fastauth.models import FastAuthRefreshTokenMixin
+    from fastauth.adapters.sqlalchemy.models import FastAuthRefreshTokenMixin
 
     class Base(DeclarativeBase):
         pass
@@ -155,3 +159,77 @@ class FastAuthRateLimitMixin:
     key: Mapped[str] = mapped_column(primary_key=True)
     count: Mapped[int] = mapped_column(default=0)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FastAuthPasswordResetTokensMixin:
+    """Adds the required FastAuth columns to a `password_reset_tokens` model.
+
+    Inherit from this mixin (plus your declarative `Base`) in your own
+    `password_reset_tokens` model. It does not define `__tablename__` and the necessary foreign key — you do.
+
+    Only the SHA-256 hex of the raw token is stored — the raw value is
+    emailed to the user once and never touches the database.
+
+    Attributes:
+        id: Primary key, random `uuid4` (unpredictable token-row id).
+        user_id: Foreign key to the `users` table.
+        token_hash: Hex SHA-256 of the raw reset token. Unique + indexed
+            for single-row lookup; never the raw token itself.
+        expires_at: Timezone-aware expiry timestamp (15-minute lifetime).
+        used_at: Timezone-aware consumption timestamp, None while
+            outstanding. Single-use: replaying a consumed token is rejected.
+
+    Example:
+    ```python
+    from sqlalchemy.orm import DeclarativeBase
+    from fastauth.adapters.sqlalchemy.models import FastAuthPasswordResetTokensMixin
+
+    class Base(DeclarativeBase):
+        pass
+
+    class PasswordResetToken(Base, FastAuthPasswordResetTokensMixin):
+        __tablename__ = "password_reset_tokens"
+
+        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    ```
+    """
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True
+    )
+
+
+class FastAuthOIDCAccountMixin:
+    """Links one OIDC identity to one of your users. Does not define
+    `__tablename__`, `user_id`, or the unique constraint — you do.
+
+    Example:
+    ```python
+    import uuid
+    from sqlalchemy import ForeignKey, UniqueConstraint
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+    from fastauth.adapters.sqlalchemy.models import FastAuthOIDCAccountMixin
+
+    class Base(DeclarativeBase):
+        pass
+
+    class OIDCAccount(Base, FastAuthOIDCAccountMixin):
+        __tablename__ = "oidc_accounts"
+
+        # Required: link each token back to a user.
+        # Replace "users.id" with your actual user table name if different.
+        user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+
+        __table_args__ = (
+                UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_account"), # mandatory
+                UniqueConstraint("provider", "user_id", name="uq_oauth_provider_per_user"),  # optional
+            )
+    ```
+    """
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str]
+    provider_user_id: Mapped[str]

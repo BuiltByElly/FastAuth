@@ -1,25 +1,23 @@
 """Per-request database bridge for FastAuth."""
 
 from abc import ABC, abstractmethod
-from typing import Any, TypeVar
+from typing import Any
 
 from pwdlib import PasswordHash
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.config import JWTConfig
-from fastauth.models import (
-    FastAuthRateLimitMixin,
-    FastAuthRefreshTokenMixin,
-    FastAuthSessionMixin,
-    FastAuthUserMixin,
+from fastauth.protocols import (
+    OIDCAccountT,
+    PasswordResetTokenT,
+    RateLimitT,
+    RefreshT,
+    SessionT,
+    UserT,
 )
-
-UserT = TypeVar("UserT", bound=FastAuthUserMixin)
-SessionT = TypeVar("SessionT", bound=FastAuthSessionMixin)
-RateLimitT = TypeVar("RateLimitT", bound=FastAuthRateLimitMixin)
+from fastauth.schemas import OIDCUserInfo
 
 
-class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
+class Adapter[UserT, SessionT, OIDCAccountT](ABC):
     """Abstract base class for the JWT and Sessions strategy ORM adapters. Wraps one request-scoped session.
 
     Subclasses share method names; session vs JWT differ internally.
@@ -31,22 +29,31 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
 
     def __init__(
         self,
-        db_session: AsyncSession,
+        db_session: Any,
         user_model: type[UserT],
         session_model: type[SessionT] | None = None,
         jwt_config: JWTConfig | None = None,
-        refresh_model: type[FastAuthRefreshTokenMixin] | None = None,
+        refresh_model: type[RefreshT] | None = None,
         session_expire_days: int = 7,
         password_hasher: PasswordHash | None = None,
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
+        oidc_account_model: type[OIDCAccountT] | None = None,
     ):
-        """Store the request-scoped session plus app models (no commit here)."""
+        """Store the request-scoped session plus app models (no commit here).
+
+        ``db_session`` is intentionally opaque: each backend defines what a
+        "session" is (e.g. SQLAlchemy's ``AsyncSession``). It is only ever
+        passed back into the backend's own adapter methods.
+        """
         self.db_session = db_session
-        self.user_model: type[UserT] = user_model
-        self.session_model: type[SessionT] | None = session_model
+        self.user_model = user_model
+        self.session_model = session_model
         self.jwt_config = jwt_config
         self.refresh_model = refresh_model
         self.session_expire_days = session_expire_days
         self.password_hasher = password_hasher
+        self.password_reset_token_model = password_reset_token_model
+        self.oidc_account_model = oidc_account_model
 
     @classmethod
     @abstractmethod
@@ -86,25 +93,71 @@ class Adapter[UserT: FastAuthUserMixin, SessionT: FastAuthSessionMixin](ABC):
         ...
 
     @abstractmethod
-    async def revoke_credential(self, token: str) -> None:
+    async def revoke_credential(self, token: str) -> str | None:
         """Invalidate a credential: delete row (session) or no-op (JWT)."""
         ...
+
+    @abstractmethod
+    def require_password_reset_model(
+        self,
+    ) -> type[PasswordResetTokenT]: ...
+
+    @abstractmethod
+    def require_oidc_account_model(
+        self,
+    ) -> type[OIDCAccountT]: ...
+
+    @abstractmethod
+    async def get_oidc_account(
+        self, provider: str, provider_user_id: str
+    ) -> OIDCAccountT: ...
+
+    @abstractmethod
+    async def create_user_from_oidc(self, user_info: OIDCUserInfo) -> UserT: ...
 
     async def issue_refresh_token(self, user: UserT) -> str:
         """Mint + store a refresh token (JWT-only; others raise)."""
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
     async def consume_refresh_token(self, token: str) -> UserT | None:
-        """Validate a refresh token single-use (burn it) -> user or None."""
+        """Validate a refresh token single-use (burn it) -> user or None.
+
+        Returns True if the token was consumed and its family revoked, or None if invalid/expired.
+        """
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
-    async def revoke_refresh_token(self, token: str) -> None:
-        """Delete a refresh token row if present; never raises."""
+    async def revoke_refresh_token(self, token: str) -> str | None:
+        """Delete a refresh token row if present and return the user's id for on_after_logout hook; never raises."""
         raise NotImplementedError("This strategy does not support refresh tokens.")
 
+    async def purge_expired_refresh_tokens(self) -> int:
+        """Delete expired refresh-token rows; returns the deleted count.
 
-class RateLimiterAdapter[RateLimitT: FastAuthRateLimitMixin](ABC):
-    def __init__(self, db_session: AsyncSession, model: type[RateLimitT]):
+        Expired rows are useless even for reuse detection (their JWTs fail
+        the `exp` check before the row is ever read). Flushes; the caller
+        commits. Designed for a scheduler job.
+        """
+        raise NotImplementedError("This strategy does not support refresh tokens.")
+
+    async def set_password(self, user: UserT, new_password: str) -> None:
+        """Hash and persist a new password for the user."""
+
+    async def revoke_credentials_on_password_reset(self, user: UserT) -> None:
+        """Invalidate whatever currently lets this user stay logged in.
+
+        Session strategy: delete/revoke session rows.
+        JWT strategy: stamp `password_changed_at` and revoke the refresh
+        token family, so old access tokens are rejected and no new ones
+        can be minted from a stolen refresh token.
+        """
+
+    async def create_password_reset_token(self, user: UserT) -> str: ...
+
+    async def consume_password_reset_token(self, token: str) -> UserT | None: ...
+
+
+class RateLimiterAdapter[RateLimitT](ABC):
+    def __init__(self, db_session: Any, model: type[RateLimitT]):
         self.db_session = db_session
         self.model = model
 

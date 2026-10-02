@@ -2,7 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastauth.adapters.adapters import RateLimiterAdapter, RateLimitT
+from fastauth.adapters.adapters import RateLimiterAdapter
+from fastauth.protocols import RateLimitT
 
 
 class SQLAlchemyRateLimiter(RateLimiterAdapter[RateLimitT]):

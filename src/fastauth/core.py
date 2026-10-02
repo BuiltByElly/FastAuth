@@ -8,28 +8,40 @@ Rate limiting is a separate component, see `fastauth.dependencies.rate_limiter`.
 
 import warnings
 from collections.abc import AsyncGenerator, Callable
-from datetime import UTC, datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter
-from sqlalchemy import delete, or_
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastauth.adapters.adapters import Adapter, RateLimiterAdapter
+from fastauth.adapters.adapters import Adapter
 from fastauth.dependencies.current_user import jwt_current_user, session_current_user
 from fastauth.dependencies.rate_limiter import RateLimiter
-from fastauth.models import (
-    FastAuthRateLimitMixin,
-    FastAuthRefreshTokenMixin,
-    FastAuthSessionMixin,
-    FastAuthUserMixin,
+from fastauth.hooks.login import LoginHooks
+from fastauth.hooks.logout import LogoutHooks
+from fastauth.hooks.password import PasswordHooks
+from fastauth.hooks.refresh import RefreshHooks
+from fastauth.hooks.signup import SignupHooks
+from fastauth.oauth.oidc import OIDCProvider, OIDCStateManager
+from fastauth.protocols import (
+    OIDCAccountProtocol,
+    OIDCAccountT,
+    PasswordResetTokenProtocol,
+    PasswordResetTokenT,
+    RefreshT,
+    RefreshTokenProtocol,
+    SessionProtocol,
+    SessionT,
+    UserProtocol,
+    UserT,
+    ensure_model_compliance,
 )
-from fastauth.routes.context import AuthContext
+from fastauth.routes.context import AuthContext, OIDCContext
 from fastauth.routes.jwt_route import register_jwt_routes
+from fastauth.routes.oidc_route import register_oidc_routes
 from fastauth.routes.session import register_session_routes
 from fastauth.schemas import (
     build_login_schema,
+    build_password_reset_token_schema,
     build_signup_schema,
     build_user_response_schema,
 )
@@ -51,8 +63,9 @@ class FastAuth:
     def __init__(
         self,
         adapter: type[Adapter],
-        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
-        user_model: type[FastAuthUserMixin],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserT],
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
@@ -62,8 +75,8 @@ class FastAuth:
 
         Args:
             adapter: Per-request DB bridge (session or JWT flavor).
-            db_session_dependency: FastAPI dep yielding an AsyncSession.
-            user_model: App User (uses FastAuthUserMixin).
+            db_session_dependency: FastAPI dep yielding a per-request DB handle.
+            user_model: App User (satisfies UserProtocol).
             rate_limiter: Ready-made limiter instance. When passed it owns
                 ALL rate-limit behavior and `config.rate_limit` is ignored
                 (a warning is emitted if that section is non-default).
@@ -73,7 +86,17 @@ class FastAuth:
         """
         cfg = config or FastAuthConfig()
         self.config = cfg
+
+        ensure_model_compliance(user_model, UserProtocol, name="user_model")
+        if password_reset_token_model is not None:
+            ensure_model_compliance(
+                password_reset_token_model,
+                PasswordResetTokenProtocol,
+                name="password_reset_token_model",
+            )
+
         self.password_hasher = build_hasher(cfg.password.hash_schemes)
+
         if rate_limiter is not None and cfg.rate_limit != RateLimitConfig():
             warnings.warn(
                 "A rate_limiter instance was passed explicitly, so the "
@@ -94,20 +117,71 @@ class FastAuth:
         self.user_response_schema = build_user_response_schema(
             adapter.get_response_fields(user_model)
         )
+        self.password_reset_token_schema = build_password_reset_token_schema(
+            password_config=cfg.password,
+        )
+
+        self.signup_hooks = SignupHooks(
+            schema=self.signup_schema,
+        )
+        self.on_before_signup = self.signup_hooks.on_before_signup
+        self.on_after_signup = self.signup_hooks.on_after_signup
+        self.on_signup_failure = self.signup_hooks.on_signup_failure
+
+        self.login_hooks = LoginHooks(
+            schema=self.login_schema,
+        )
+        self.on_before_login = self.login_hooks.on_before_login
+        self.on_login_failure = self.login_hooks.on_login_failure
+        self.on_after_login = self.login_hooks.on_after_login
+
+        self.logout_hooks = LogoutHooks()
+        self.on_after_logout = self.logout_hooks.add_after_logout
+
+        self.refresh_hooks = RefreshHooks()
+        self.on_token_reuse_detected = self.refresh_hooks.on_token_reuse_detected
+
+        self.password_hooks = PasswordHooks()
+        self.on_password_reset_requested = (
+            self.password_hooks.on_password_reset_requested
+        )
+        self.on_password_changed = self.password_hooks.on_password_changed
 
         self.ctx = AuthContext(
             adapter_class=adapter,
             user_model=user_model,
+            password_reset_token_model=password_reset_token_model,
             session_model=None,
             db_session_dependency=db_session_dependency,
             signup_schema=self.signup_schema,
             login_schema=self.login_schema,
             user_response_schema=self.user_response_schema,
+            password_reset_token_schema=self.password_reset_token_schema,
             strategy=self.strategy,
             config=cfg,
             password_hasher=self.password_hasher,
             refresh_model=None,
             rate_limiter=self.rate_limiter,
+            signup_hooks={
+                "run_before_signup": self.signup_hooks.run_before_signup,
+                "run_after_signup": self.signup_hooks.run_after_signup,
+                "run_signup_failure": self.signup_hooks.run_signup_failure,
+            },
+            login_hooks={
+                "run_before_login": self.login_hooks.run_before_login,
+                "run_login_failure": self.login_hooks.run_login_failure,
+                "run_after_login": self.login_hooks.run_after_login,
+            },
+            logout_hooks={
+                "run_after_logout": self.logout_hooks.run_after_logout,
+            },
+            refresh_hooks={
+                "run_token_reuse_detected": self.refresh_hooks.run_token_reuse_detected,
+            },
+            password_hooks={
+                "run_password_reset_requested": self.password_hooks.run_password_reset_requested,
+                "run_password_changed": self.password_hooks.run_password_changed,
+            },
         )
         tags = tags or ["Authentication"]
         self.router = APIRouter(prefix=prefix, tags=tags)
@@ -125,13 +199,14 @@ class SessionAuth(FastAuth):
     def __init__(
         self,
         adapter: type[Adapter],
-        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
-        user_model: type[FastAuthUserMixin],
-        session_model: type[FastAuthSessionMixin],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserT],
+        session_model: type[SessionT],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
     ):
         """Bind models + session provider; mount signup/login/logout/me.
 
@@ -147,10 +222,12 @@ class SessionAuth(FastAuth):
             tags=tags,
             prefix=prefix,
             config=config,
+            password_reset_token_model=password_reset_token_model,
         )
 
         self.current_user = session_current_user(self.ctx)
         self.ctx.session_model = session_model
+        ensure_model_compliance(session_model, SessionProtocol, name="session_model")
         register_session_routes(self.router, self.ctx, self.current_user)
 
 
@@ -166,13 +243,14 @@ class JWTAuth(FastAuth):
     def __init__(
         self,
         adapter: type[Adapter],
-        db_session_dependency: Callable[[], AsyncGenerator[AsyncSession]],
-        user_model: type[FastAuthUserMixin],
-        refresh_model: type[FastAuthRefreshTokenMixin],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserT],
+        refresh_model: type[RefreshT],
         rate_limiter: RateLimiter | None = None,
         tags: list[str | Enum] | None = None,
         prefix: str = "/auth",
         config: FastAuthConfig | None = None,
+        password_reset_token_model: type[PasswordResetTokenT] | None = None,
     ):
         """Bind models + session provider; mount signup/login/refresh/logout/me.
 
@@ -187,6 +265,7 @@ class JWTAuth(FastAuth):
             db_session_dependency=db_session_dependency,
             user_model=user_model,
             rate_limiter=rate_limiter,
+            password_reset_token_model=password_reset_token_model,
             tags=tags,
             prefix=prefix,
             config=config,
@@ -196,17 +275,18 @@ class JWTAuth(FastAuth):
             raise ValueError(msg)
         self.refresh_model = refresh_model
         self.ctx.refresh_model = refresh_model
+        ensure_model_compliance(
+            refresh_model, RefreshTokenProtocol, name="refresh_model"
+        )
         self.current_user = jwt_current_user(self.ctx)
         register_jwt_routes(self.router, self.ctx, self.current_user)
 
-    async def purge_expired_refresh_tokens(self, session: AsyncSession) -> int:
+    async def purge_expired_refresh_tokens(self, session: Any) -> int:
         """Delete expired refresh-token rows; returns the deleted count.
 
-        Expired rows are useless even for reuse detection (their JWTs fail
-        the `exp` check before the row is ever read), so this only removes
-        garbage. Outstanding and consumed-but-unexpired rows are kept.
-
-        Flushes; the caller commits. Designed for a scheduler job, e.g.::
+        Delegates to the adapter (which owns all storage access), so this
+        stays ORM-agnostic. Flushes; the caller commits. Designed for a
+        scheduler job, e.g.::
 
             async def purge_job() -> None:
                 async with session_factory() as session:
@@ -214,13 +294,111 @@ class JWTAuth(FastAuth):
                     await session.commit()
                     logger.info("purged %d refresh tokens", deleted)
         """
-        result = await session.execute(
-            delete(self.refresh_model).where(
-                or_(
-                    self.refresh_model.expires_at.is_(None),  # type: ignore[attr-defined]
-                    self.refresh_model.expires_at <= datetime.now(UTC),  # type: ignore[attr-defined]
-                )
-            )
+        return await self.ctx.build_adapter(session).purge_expired_refresh_tokens()
+
+
+class OIDCAuth(FastAuth):
+    """OIDC login (Google, Microsoft, etc.) — issues credentials via its
+    own adapter, same call shape as SessionAuth/JWTAuth's login route.
+
+    Deliberately skips `FastAuth.__init__` — none of the password/signup
+    machinery there (hashers, signup/login/password hooks) applies to
+    OIDC. Only the pieces actually shared (ctx, router, adapter binding)
+    are rebuilt here by hand.
+    """
+
+    strategy: Literal["session", "jwt"]
+
+    def __init__(
+        self,
+        adapter: type[Adapter],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserT],
+        oidc_account_model: type[OIDCAccountT],
+        strategy: Literal["session", "jwt"],
+        session_model: type[SessionT] | None = None,
+        refresh_model: type[RefreshT] | None = None,
+        tags: list[str | Enum] | None = None,
+        prefix: str = "/auth/oidc",
+        config: FastAuthConfig | None = None,
+        rate_limiter: RateLimiter | None = None,
+    ):
+        cfg = config or FastAuthConfig()
+        if cfg.oidc is None:
+            msg = "OIDCAuth requires config.oidc (pass FastAuthConfig with oidc=OIDCConfig(...))."
+            raise ValueError(msg)
+
+        ensure_model_compliance(user_model, UserProtocol, name="user_model")
+        ensure_model_compliance(
+            oidc_account_model, OIDCAccountProtocol, name="oidc_account_model"
         )
-        await session.flush()
-        return result.rowcount  # type: ignore[attr-defined]
+
+        if strategy == "session" and session_model is None:
+            msg = "OIDCAuth strategy='session' requires session_model."
+            raise ValueError(msg)
+
+        if strategy == "jwt" and refresh_model is None:
+            msg = "OIDCAuth strategy='jwt' requires refresh_model."
+            raise ValueError(msg)
+
+        if strategy == "session" and session_model is not None:
+            ensure_model_compliance(
+                session_model, SessionProtocol, name="session_model"
+            )
+
+        if strategy == "jwt" and refresh_model is not None:
+            ensure_model_compliance(
+                refresh_model, RefreshTokenProtocol, name="refresh_model"
+            )
+
+        self.user_response_schema = build_user_response_schema(
+            adapter.get_response_fields(user_model)
+        )
+        self.config = cfg
+        self.strategy = strategy
+        self.rate_limiter = rate_limiter or RateLimiter(
+            rate_limit_config=cfg.rate_limit
+        )
+
+        self.state_manager = OIDCStateManager(secret_key=cfg.oidc.secret_key)
+        self.providers: dict[str, OIDCProvider] = {
+            p.name: OIDCProvider(
+                name=p.name,
+                client_id=p.client_id,
+                client_secret=p.client_secret,
+                metadata_url=str(p.metadata_url),
+                scope=" ".join(p.scopes),
+                extra_authorize_params=p.extra_authorize_params,
+            )
+            for p in cfg.oidc.providers
+        }
+
+        self.login_hooks = LoginHooks(
+            schema=None,
+        )
+        self.on_after_login = self.login_hooks.on_after_login
+
+        self.ctx = OIDCContext(
+            adapter_class=adapter,
+            user_model=user_model,
+            session_model=session_model,
+            refresh_model=refresh_model,
+            db_session_dependency=db_session_dependency,
+            strategy=self.strategy,
+            config=cfg,
+            state_manager=self.state_manager,
+            providers=self.providers,
+            oidc_account_model=oidc_account_model,
+            rate_limiter=self.rate_limiter,
+            login_hooks={"run_after_login": self.login_hooks.run_after_login},
+        )
+
+        self.current_user = (
+            jwt_current_user(self.ctx)
+            if self.strategy == "jwt"
+            else session_current_user(self.ctx)
+        )
+
+        tags = tags or [p.name for p in cfg.oidc.providers]
+        self.router = APIRouter(prefix=prefix, tags=tags)
+        register_oidc_routes(self.router, self.ctx)

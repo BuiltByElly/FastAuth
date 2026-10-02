@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 SameSite = Literal["lax", "strict", "none"]
 JWTAlgorithm = Literal["HS256", "HS384", "HS512"]
@@ -41,12 +47,15 @@ class RateLimitConfig(BaseModel):
     storage: Literal["database", "memory"] = "memory"
     trusted_ip_header: str | None = None
 
-    # per-route overrides, Better Auth style — path -> (window, max)
     custom_rules: dict[str, tuple[int, int]] = Field(
         default_factory=lambda: {
-            "/login": (10, 5),
+            "/login": (10, 3),
             "/signup": (60, 3),
-            "/refresh": (60, 10),
+            "/refresh": (60, 5),
+            "/forgot-password": (300, 3),
+            "/reset-password": (300, 3),
+            "/{provider}/login": (60, 10),
+            "/{provider}/callback": (60, 5),
         }
     )
 
@@ -140,6 +149,39 @@ class PasswordConfig(BaseModel):
         return self
 
 
+class OIDCProviderConfig(BaseModel):
+    name: str
+    client_id: str
+    client_secret: str
+    redirect_uri: str
+    metadata_url: str
+    scopes: list[str] = ["openid", "email", "profile"]
+    extra_authorize_params: dict[str, str] = Field(default_factory=dict)
+    """Provider-specific query params for the authorize URL.
+    e.g. Google: {"access_type": "offline", "prompt": "consent"}"""
+
+
+class OIDCConfig(BaseModel):
+    """OIDC strategy settings — one secret shared across all providers."""
+
+    model_config = ConfigDict(frozen=True)
+
+    secret_key: str = Field(min_length=32, max_length=512)
+    """Signs the OAuth `state` cookie. Separate from `jwt.secret_key` —
+    rotating one doesn't invalidate the other."""
+
+    providers: list[OIDCProviderConfig] = Field(default_factory=list)
+
+    @field_validator("secret_key")
+    @classmethod
+    def _reject_placeholders(cls, v: str) -> str:
+        if v.strip().lower() in {"change-me", "changeme", "secret", "password", "test"}:
+            raise ValueError(
+                "oidc secret_key must not be a placeholder value. Use `openssl rand -hex 32` to generate a secure key."
+            )
+        return v
+
+
 class FastAuthConfig(BaseModel):
     """Single config object for `FastAuth(..., config=...)`.
 
@@ -154,6 +196,7 @@ class FastAuthConfig(BaseModel):
     cookies: CookieConfig = CookieConfig()
     password: PasswordConfig = PasswordConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()
+    oidc: OIDCConfig | None = None
 
     """Required iff strategy="jwt" (validated in `FastAuth.__init__`)."""
     jwt: JWTConfig | None = None

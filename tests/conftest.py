@@ -5,28 +5,39 @@ never imported or exercised by the suite.
 """
 
 import uuid
+from typing import Annotated, Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import JWTAuth, SessionAuth
-from fastauth.adapters import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
-from fastauth.adapters.rate_limit.sqlalchemy import SQLAlchemyRateLimiter
-from fastauth.config import CookieConfig, FastAuthConfig, JWTConfig, RateLimitConfig
-from fastauth.models import (
+from fastauth.adapters.sqlalchemy.jwt_adapter import SQLAlchemyJWTAdapter
+from fastauth.adapters.sqlalchemy.models import (
+    FastAuthOIDCAccountMixin,
+    FastAuthPasswordResetTokensMixin,
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
     FastAuthSessionMixin,
     FastAuthUserMixin,
 )
+from fastauth.adapters.sqlalchemy.session_adapter import SQLAlchemySessionAdapter
+from fastauth.config import (
+    CookieConfig,
+    FastAuthConfig,
+    JWTConfig,
+    OIDCConfig,
+    OIDCProviderConfig,
+    RateLimitConfig,
+)
+from fastauth.core import OIDCAuth
 
 TEST_SECRET = "0123456789abcdef" * 3  # 48 chars, not a placeholder
 
@@ -63,6 +74,22 @@ class RateLimitRow(Base, FastAuthRateLimitMixin):
     __tablename__ = "rate_limits"
 
 
+class PasswordResetToken(Base, FastAuthPasswordResetTokensMixin):
+    """Test password-reset-token table linked to User."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+
+
+class ExtraPasswordResetToken(Base, FastAuthPasswordResetTokensMixin):
+    """Reset-token table linked to ExtraUser (hook-matrix apps)."""
+
+    __tablename__ = "extra_password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("extra_users.id"))
+
+
 class ExtraUser(Base, FastAuthUserMixin):
     """User with dev-tagged extra columns for dynamic-schema tests."""
 
@@ -75,6 +102,20 @@ class ExtraUser(Base, FastAuthUserMixin):
         String, info={"fastauth_input": True, "fastauth_returned": False}
     )
     internal_note: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class OIDCAccount(Base, FastAuthOIDCAccountMixin):
+    """Test OIDC-account row linking a provider identity to a User."""
+
+    __tablename__ = "oidc_accounts"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "provider_user_id", name="uq_oidc_provider_account"
+        ),
+    )
 
 
 @pytest.fixture
@@ -135,8 +176,41 @@ def jwt_config():
     return JWTConfig(secret_key=TEST_SECRET)
 
 
+@pytest.fixture
+def oidc_config():
+    """One registered 'google' provider; the IdP itself is always stubbed."""
+    return OIDCConfig(
+        secret_key="o" * 40,
+        providers=[
+            OIDCProviderConfig(
+                name="google",
+                client_id="test-client-id",
+                client_secret="test-client-secret",
+                redirect_uri="http://testserver/auth/oidc/google/callback",
+                metadata_url="https://idp.example/.well-known/openid-configuration",
+            )
+        ],
+    )
+
+
+@pytest.fixture
+def oidc_test_config(oidc_config):
+    """Non-secure-cookie, rate-limit-free config for OIDC flow tests.
+
+    Same rationale as `test_config`: strict HTTP clients withhold Secure
+    cookies over plain http; cookie *flags* are asserted on the raw
+    Set-Cookie header in the transport/OIDC security tests.
+    """
+    return FastAuthConfig(
+        cookies=CookieConfig(secure=False),
+        rate_limit=RateLimitConfig(enabled=False),
+        oidc=oidc_config,
+    )
+
+
 def build_session_app(get_db, config=None, **kwargs):
     """SessionAuth app with a /protected route behind `auth.current_user`."""
+    kwargs.setdefault("password_reset_token_model", PasswordResetToken)
     auth = SessionAuth(
         adapter=SQLAlchemySessionAdapter,
         user_model=User,
@@ -149,7 +223,7 @@ def build_session_app(get_db, config=None, **kwargs):
     app.include_router(auth.router)
 
     @app.get("/protected")
-    async def protected(user=Depends(auth.current_user)):
+    async def protected(user: Annotated[Any, Depends(auth.current_user)]):
         return {"email": user.email}
 
     return app, auth
@@ -157,6 +231,7 @@ def build_session_app(get_db, config=None, **kwargs):
 
 def build_jwt_app(get_db, config=None, **kwargs):
     """JWTAuth app with a /protected route behind `auth.current_user`."""
+    kwargs.setdefault("password_reset_token_model", PasswordResetToken)
     auth = JWTAuth(
         adapter=SQLAlchemyJWTAdapter,
         user_model=User,
@@ -169,7 +244,39 @@ def build_jwt_app(get_db, config=None, **kwargs):
     app.include_router(auth.router)
 
     @app.get("/protected")
-    async def protected(user=Depends(auth.current_user)):
+    async def protected(user: Annotated[Any, Depends(auth.current_user)]):
+        return {"email": user.email}
+
+    return app, auth
+
+
+def build_oidc_app(get_db, config=None, strategy="session", **kwargs):
+    """OIDCAuth app with a /protected route behind `auth.current_user`.
+
+    `strategy` picks the credential backend ("session" or "jwt") and the
+    model it needs. The IdP is stubbed with `stub_oidc_provider` — nothing
+    here ever reaches the network.
+    """
+    if strategy == "session":
+        kwargs.setdefault("session_model", Session)
+        adapter = SQLAlchemySessionAdapter
+    else:
+        kwargs.setdefault("refresh_model", RefreshToken)
+        adapter = SQLAlchemyJWTAdapter
+    auth = OIDCAuth(
+        adapter=adapter,
+        user_model=User,
+        oidc_account_model=OIDCAccount,
+        db_session_dependency=get_db,
+        strategy=strategy,
+        config=config,
+        **kwargs,
+    )
+    app = FastAPI()
+    app.include_router(auth.router)
+
+    @app.get("/protected")
+    async def protected(user: Annotated[Any, Depends(auth.current_user)]):
         return {"email": user.email}
 
     return app, auth
@@ -209,16 +316,66 @@ def cookie_value(set_cookie_header):
     return set_cookie_header.split(";")[0].split("=", 1)[1].strip('"')
 
 
+def stub_oidc_provider(
+    monkeypatch,
+    *,
+    sub="sub-1",
+    email="u@example.com",
+    email_verified=True,
+    name="Test User",
+):
+    """Stub the IdP: authorize redirect + user-info fetch, zero network.
+
+    Patches `OIDCProvider` at the class level, so every provider registered
+    on the app under test routes through here.
+    """
+    from fastauth.oauth.oidc import OIDCProvider
+    from fastauth.schemas import OIDCUserInfo
+
+    async def _authorize(self, redirect_uri, state):
+        return (
+            f"https://idp.example/authorize?client_id={self.client_id}"
+            f"&redirect_uri={redirect_uri}&state={state}"
+        )
+
+    async def _fetch_user_info(self, code, redirect_uri):
+        return OIDCUserInfo(
+            provider=self.name,
+            provider_user_id=sub,
+            email=email,
+            email_verified=email_verified,
+            name=name,
+            avatar_url=None,
+        )
+
+    monkeypatch.setattr(OIDCProvider, "get_authorize_url", _authorize)
+    monkeypatch.setattr(OIDCProvider, "fetch_user_info", _fetch_user_info)
+
+
+def oidc_begin(client, provider="google"):
+    """Start an OIDC login: assert the IdP redirect and return its raw state."""
+    response = client.get(f"/auth/oidc/{provider}/login")
+    assert response.status_code == 307, response.text
+    location = response.headers["location"]
+    return parse_qs(urlparse(location).query)["state"][0]
+
+
 __all__ = [
     "TEST_SECRET",
     "Base",
+    "ExtraPasswordResetToken",
     "ExtraUser",
+    "OIDCAccount",
+    "PasswordResetToken",
     "RateLimitRow",
     "RefreshToken",
     "Session",
     "User",
     "build_jwt_app",
+    "build_oidc_app",
     "build_session_app",
     "cookie_value",
     "create_user",
+    "oidc_begin",
+    "stub_oidc_provider",
 ]

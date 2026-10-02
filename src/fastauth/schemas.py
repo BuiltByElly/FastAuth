@@ -3,27 +3,39 @@
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, create_model
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, create_model
 
 from fastauth.config import PasswordConfig
+
+
+class OIDCUserInfo(BaseModel):
+    provider: str  # "google", "microsoft", etc.
+    provider_user_id: str  # stable ID from that provider ("sub" for OIDC)
+    email: str | None
+    email_verified: bool
+    name: str | None
+    avatar_url: str | None
+    others: dict[str, Any] | None = None
 
 
 class SignupBase(BaseModel):
     """Core fields every signup requires, regardless of dev extras."""
 
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: SecretStr = Field(min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
     """Static: login never takes extra fields."""
 
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: SecretStr = Field(min_length=8, max_length=128)
 
 
 class UserResponseBase(BaseModel):
     """Core fields every user response returns, regardless of dev extras."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     email: EmailStr
@@ -44,6 +56,15 @@ class SessionResponse(BaseModel):
     expires_at: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=256)
+    new_password: SecretStr = Field(min_length=8, max_length=128)
+
+
 def _password_field(password_config: PasswordConfig | None = None) -> Any:
     """Password field honoring the configured policy (defaults 8..128)."""
     pc = password_config or PasswordConfig()
@@ -61,7 +82,7 @@ def build_signup_schema(
         "SignupBase",
         __base__=BaseModel,
         email=(EmailStr, ...),
-        password=(str, _password_field(password_config)),
+        password=(SecretStr, _password_field(password_config)),
     )
     return create_model("SignupRequest", __base__=dyn_base, **extra_fields)  # type: ignore[call-overload]
 
@@ -76,10 +97,23 @@ def build_login_schema(
         "LoginRequest",
         __base__=BaseModel,
         email=(EmailStr, ...),
-        password=(str, _password_field(password_config)),
+        password=(SecretStr, _password_field(password_config)),
     )
 
 
 def build_user_response_schema(extra_fields: dict[str, Any]) -> type[BaseModel]:
     """Combine UserResponseBase with dev columns tagged fastauth_returned=True."""
     return create_model("UserResponse", __base__=UserResponseBase, **extra_fields)  # type: ignore[call-overload]
+
+
+def build_password_reset_token_schema(
+    password_config: PasswordConfig | None = None,
+) -> type[BaseModel]:
+    if password_config is None:
+        return ResetPasswordRequest
+    return create_model(
+        "ResetPasswordRequest",
+        __base__=BaseModel,
+        token=(str, Field(min_length=1, max_length=256)),
+        new_password=(SecretStr, _password_field(password_config)),
+    )

@@ -30,7 +30,9 @@ def seeded_client(get_db, test_config):
     """Client with one registered user (rate limiting disabled)."""
     app, _ = build_session_app(get_db, config=test_config)
     with TestClient(app) as client:
-        client.post("/auth/signup", json={"email": "u@example.com", "password": "long-enough"})
+        client.post(
+            "/auth/signup", json={"email": "u@example.com", "password": "long-enough"}
+        )
         yield client
 
 
@@ -41,4 +43,29 @@ def test_signup_duplicate_deliberately_discloses(seeded_client):
         "/auth/signup", json={"email": "u@example.com", "password": "long-enough"}
     )
     assert response.status_code == 400
-    assert response.json() == {"detail": "Email already registered."}
+    assert response.json() == {"detail": "Email already registered"}
+
+
+def test_forgot_password_never_reveals_registration(seeded_client):
+    """Known vs unknown email: byte-identical status + body."""
+    known = seeded_client.post(
+        "/auth/forgot-password", json={"email": "u@example.com"}
+    )
+    unknown = seeded_client.post(
+        "/auth/forgot-password", json={"email": "ghost@example.com"}
+    )
+    assert known.status_code == unknown.status_code == 200
+    assert known.json() == unknown.json() == {
+        "detail": "If that email exists, a reset link was sent."
+    }
+
+
+def test_reset_password_rejects_garbage_without_oracle(seeded_client):
+    """Unknown, empty-ish, and malformed tokens share one 400 body."""
+    for token in ("never-issued", "x", "a.b.c"):
+        response = seeded_client.post(
+            "/auth/reset-password",
+            json={"token": token, "new_password": "brand-new-password"},
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "Invalid or expired token."}

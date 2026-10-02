@@ -2,4 +2,8 @@
 
 from .core import FastAuth, JWTAuth, SessionAuth
 
-__all__ = ["FastAuth", "JWTAuth", "SessionAuth"]
+__all__ = [
+    "FastAuth",
+    "JWTAuth",
+    "SessionAuth",
+]

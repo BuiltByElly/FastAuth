@@ -9,6 +9,7 @@ from pwdlib import PasswordHash
 from pwdlib.exceptions import UnknownHashError
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.base import HasherProtocol
+from pydantic import SecretStr
 
 
 def _bcrypt_hasher() -> HasherProtocol:
@@ -48,17 +49,29 @@ def build_hasher(schemes: list[str] | None) -> PasswordHash:
     return PasswordHash(hashers)
 
 
-def hash_password(password: str, hasher: PasswordHash | None = None) -> str:
-    """Hash a plaintext password."""
-    return (hasher or _default_hasher).hash(password)
+def _reveal(password: str | SecretStr) -> str:
+    """Unwrap a SecretStr to plaintext at the trust boundary.
+
+    This is the ONLY place a secret is deliberately unwrapped: hashing and
+    verification cannot run on the masked value. Callers keep holding
+    SecretStr everywhere else so repr/str/JSON can never leak it.
+    """
+    if isinstance(password, SecretStr):
+        return password.get_secret_value()
+    return password
+
+
+def hash_password(password: str | SecretStr, hasher: PasswordHash | None = None) -> str:
+    """Hash a plaintext password (accepts SecretStr, unwraps it to hash)."""
+    return (hasher or _default_hasher).hash(_reveal(password))
 
 
 def verify_password(
-    password: str, hashed: str, hasher: PasswordHash | None = None
+    password: str | SecretStr, hashed: str, hasher: PasswordHash | None = None
 ) -> bool:
     """Check a plaintext password against its hash. Fail closed on bad hashes."""
     try:
-        return (hasher or _default_hasher).verify(password, hashed)
+        return (hasher or _default_hasher).verify(_reveal(password), hashed)
     except UnknownHashError:
         return False
 
