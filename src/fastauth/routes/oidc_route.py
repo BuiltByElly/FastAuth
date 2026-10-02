@@ -18,6 +18,7 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse
 
+from fastauth.adapters.exceptions import EmailAlreadyRegistered
 from fastauth.cookies import (
     refresh_cookie_kwargs,
     session_cookie_kwargs,
@@ -89,40 +90,53 @@ def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
 
         adapter = ctx.build_adapter(db_session)
         account = await adapter.get_oidc_account(provider, user_info.provider_user_id)
-        if account is None and user_info is not None:
-            user = await adapter.create_user_from_oidc(user_info)
+        if account is None:
+            try:
+                user = await adapter.create_user_from_oidc(user_info)
+            except EmailAlreadyRegistered:
+                raise HTTPException(400, "Email already registered") from None
         else:
             user = await adapter.get_user_by_id(account.user_id)
 
-        if ctx.strategy == "session" and user.is_active:  # type: ignore
+        if user is None:
+            # Orphaned account row (its user is gone): fail closed, never
+            # resurrect or authenticate anything.
+            raise HTTPException(401, "Account no longer exists.")
+        if not user.is_active:  # type: ignore[attr-defined]
+            raise HTTPException(403, "Account is inactive.")
+
+        if ctx.strategy == "session":
             credentials = await adapter.issue_credential(user)
             await db_session.commit()
 
-            expires_at = credentials.expires_at
+            expires_at = credentials.expires_at  # type:ignore
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=UTC)
             max_age = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
             set_session_cookie(
                 response,
-                str(credentials.id),
+                str(credentials.id),  # type:ignore
                 **session_cookie_kwargs(cookies, max_age=max_age),
             )
 
             # Run the after-login hook (fire and forget)
             bg_tasks.add_task(ctx.login_hooks["run_after_login"], user_info, request)  # type:ignore
             return {"success": True, "message": "Logged in successfully"}
-        else:
-            access_token = str(await adapter.issue_credential(user))
-            refresh_token = await adapter.issue_refresh_token(user)
-            set_refresh_cookie(
-                response,
-                refresh_token,
-                **refresh_cookie_kwargs(
-                    cookies,
-                    max_age=ctx.config.jwt.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
-                ),
-            )
 
-            # Run the after-login hook (fire and forget)
-            bg_tasks.add_task(ctx.login_hooks["run_after_login"], user_info, request)  # type:ignore
-            return TokenResponse(access_token=access_token)
+        access_token = str(await adapter.issue_credential(user))
+        refresh_token = await adapter.issue_refresh_token(user)
+        # Persist user/account/refresh rows — without this the minted token
+        # resolves to nothing and the IdP sign-in is lost on session close.
+        await db_session.commit()
+        set_refresh_cookie(
+            response,
+            refresh_token,
+            **refresh_cookie_kwargs(
+                cookies,
+                max_age=ctx.config.jwt.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
+            ),
+        )
+
+        # Run the after-login hook (fire and forget)
+        bg_tasks.add_task(ctx.login_hooks["run_after_login"], user_info, request)  # type:ignore
+        return TokenResponse(access_token=access_token)

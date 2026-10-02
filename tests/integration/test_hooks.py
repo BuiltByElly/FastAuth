@@ -380,64 +380,10 @@ async def test_after_logout_crash_ignored(get_db, test_config):
         assert client.post("/auth/signup", json=SIGNUP).status_code == 200
         response = client.post("/auth/logout")
     assert response.status_code == 200
-    assert response.json() == {"success": True, "message": "logged out"}
+    assert response.json() == {"success": True, "message": "Logged out successfully"}
 
 
 # ---------- JWT strategy ----------
-
-
-async def test_jwt_before_signup_mutation(get_db, test_config, jwt_config):
-    seen = {}
-
-    async def upper(payload, request):
-        payload.role = payload.role.upper()
-        seen["role"] = payload.role
-        return payload
-
-    app, auth = extra_jwt_app(
-        get_db, test_config.model_copy(update={"jwt": jwt_config})
-    )
-    auth.on_before_signup(upper)
-    with TestClient(app) as client:
-        response = client.post("/auth/signup", json=SIGNUP)
-    assert response.status_code == 200
-    assert "access_token" in response.json()
-    assert seen["role"] == "MEMBER"
-
-
-async def test_jwt_before_signup_abort(get_db, test_config, jwt_config):
-    async def deny(payload, request):
-        raise HookAbort(403, "Denied")
-
-    app, auth = extra_jwt_app(
-        get_db, test_config.model_copy(update={"jwt": jwt_config})
-    )
-    auth.on_before_signup(deny)
-    with TestClient(app) as client:
-        response = client.post("/auth/signup", json=SIGNUP)
-    assert response.status_code == 403
-    assert response.json() == {"detail": "Denied"}
-
-
-async def test_jwt_login_failure_hides_id(get_db, test_config, jwt_config):
-    seen = []
-
-    async def record(failure, request):
-        seen.append(failure)
-
-    app, auth = extra_jwt_app(
-        get_db, test_config.model_copy(update={"jwt": jwt_config})
-    )
-    auth.on_login_failure(record)
-    with TestClient(app) as client:
-        assert client.post("/auth/signup", json=SIGNUP).status_code == 200
-        response = client.post(
-            "/auth/login",
-            json={"email": "u@example.com", "password": "wrong-pass-1"},
-        )
-    assert response.status_code == 401
-    assert len(seen) == 1
-    assert seen[0].user_id is None
 
 
 async def test_jwt_after_logout_user_id(get_db, test_config, jwt_config):

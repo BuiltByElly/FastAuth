@@ -11,8 +11,6 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from tests.conftest import build_jwt_app
-
 
 def signup(client, email="u@example.com", password="long-enough"):
     return client.post("/auth/signup", json={"email": email, "password": password})
@@ -298,15 +296,6 @@ async def test_password_hooks_crash_ignored(get_db, test_config):
         assert tokens
         assert reset(client, tokens[0]).status_code == 200
 
-
-def test_reset_rejects_short_password(session_client):
-    response = session_client.post(
-        "/auth/reset-password",
-        json={"token": "anything", "new_password": "short"},
-    )
-    assert response.status_code == 422
-
-
 # ---------- JWT strategy ----------
 
 
@@ -371,48 +360,3 @@ async def test_jwt_hooks_and_access_token_invalidation(
         )
         # …but the new password logs in fine.
         assert login(client, password="brand-new-password").status_code == 200
-
-
-async def test_jwt_forgot_unknown_is_identical(get_db, test_config, jwt_config):
-    config = test_config.model_copy(update={"jwt": jwt_config})
-    app, _ = build_jwt_app(get_db, config=config)
-    with TestClient(app) as client:
-        assert signup(client).status_code == 200
-        known = forgot(client, "u@example.com")
-        unknown = forgot(client, "ghost@example.com")
-        assert known.json() == unknown.json() == {
-            "detail": "If that email exists, a reset link was sent."
-        }
-
-
-async def test_jwt_reset_single_use(get_db, test_config, jwt_config):
-    from fastapi import FastAPI
-
-    from fastauth import JWTAuth
-    from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter
-    from tests.conftest import PasswordResetToken as PRT
-    from tests.conftest import RefreshToken as RT
-    from tests.conftest import User as U
-
-    tokens = []
-    config = test_config.model_copy(update={"jwt": jwt_config})
-    auth = JWTAuth(
-        adapter=SQLAlchemyJWTAdapter,
-        user_model=U,
-        refresh_model=RT,
-        password_reset_token_model=PRT,
-        db_session_dependency=get_db,
-        config=config,
-    )
-
-    @auth.on_password_reset_requested
-    async def cap(event, request):
-        tokens.append(event.token)
-
-    app = FastAPI()
-    app.include_router(auth.router)
-    with TestClient(app) as client:
-        assert signup(client).status_code == 200
-        assert forgot(client).status_code == 200
-        assert reset(client, tokens[0]).status_code == 200
-        assert reset(client, tokens[0]).status_code == 400

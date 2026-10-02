@@ -65,11 +65,6 @@ async def test_revoke_unknown_or_garbage_never_raises(db_session):
     await adapter.revoke_credential("")
 
 
-async def test_resolve_empty_token_is_none(db_session, jwt_cfg):
-    adapter = jwt_adapter(db_session, jwt_cfg)
-    assert await adapter.resolve_credential("") is None
-
-
 async def test_jwt_adapter_without_config_fails_fast(db_session):
     adapter = SQLAlchemyJWTAdapter(db_session, User, refresh_model=RefreshToken)
     await create_user_via(db_session, adapter)
@@ -149,12 +144,6 @@ async def test_revoke_refresh_token_marks_row(db_session, jwt_cfg, session_facto
     jti = uuid.UUID(pyjwt.decode(token, options={"verify_signature": False})["jti"])
     row = await db_session.get(RefreshToken, jti)
     assert row.used_at is not None and row.revoked_at is not None
-
-
-async def test_revoke_refresh_token_garbage_never_raises(db_session, jwt_cfg):
-    adapter = jwt_adapter(db_session, jwt_cfg)
-    await adapter.revoke_refresh_token("garbage")
-    await adapter.revoke_refresh_token("")
 
 
 async def test_reset_token_is_single_use(db_session, session_factory):

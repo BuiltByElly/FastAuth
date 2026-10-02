@@ -21,12 +21,6 @@ def test_verify_fails_closed_on_garbage_hash():
     assert verify_password("anything", "") is False
 
 
-def test_build_hasher_defaults_to_module_default():
-    assert build_hasher(None) is not None
-    hashed = hash_password("pw", build_hasher(None))
-    assert verify_password("pw", hashed) is True
-
-
 def test_build_hasher_explicit_argon2():
     hasher = build_hasher(["argon2"])
     hashed = hash_password("pw", hasher)

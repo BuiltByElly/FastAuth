@@ -2,11 +2,12 @@ import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from fastauth.adapters import Adapter
+from fastauth.adapters.exceptions import EmailAlreadyRegistered
 from fastauth.protocols import OIDCAccountT, UserT
 from fastauth.schemas import OIDCUserInfo
 
@@ -30,7 +31,13 @@ class OIDCAccountAdapterMixin(Adapter[UserT, OIDCAccountT, Any]):
             is_active=True,  # type: ignore
         )
         self.db_session.add(user)
-        await self.db_session.flush()
+        try:
+            await self.db_session.flush()
+        except IntegrityError as e:
+            # The email already belongs to an account (typically a password
+            # one). An IdP email claim must never implicitly take it over.
+            await self.db_session.rollback()
+            raise EmailAlreadyRegistered(user_info.email) from e
 
         model = self.require_oidc_account_model()
         account = model(

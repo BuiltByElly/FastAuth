@@ -4,14 +4,11 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from starlette.config import Config
-from starlette.middleware.sessions import SessionMiddleware
 
-from fastauth import SessionAuth
 from fastauth.adapters.sqlalchemy import SQLAlchemySessionAdapter
 from fastauth.adapters.sqlalchemy.models import (
     FastAuthOIDCAccountMixin,
@@ -20,7 +17,6 @@ from fastauth.adapters.sqlalchemy.models import (
 )
 from fastauth.config import FastAuthConfig, OIDCConfig, OIDCProviderConfig
 from fastauth.core import OIDCAuth
-from fastauth.routes import oidc_route
 
 from .database import engine, get_db
 
@@ -93,6 +89,10 @@ oidc_providers = OIDCProviderConfig(
     redirect_uri="http://localhost:8000/auth/oidc/google/callback",
     metadata_url="https://accounts.google.com/.well-known/openid-configuration",
     scopes=["openid", "email", "profile"],
+    extra_authorize_params={
+        "access_type": "offline",
+        "prompt": "select_account",  # or "consent", or "login"
+    },
 )
 oidc = OIDCAuth(
     adapter=SQLAlchemySessionAdapter,

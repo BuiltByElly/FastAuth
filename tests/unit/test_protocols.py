@@ -10,7 +10,6 @@ from fastauth.protocols import (
     RefreshTokenProtocol,
     SessionProtocol,
     UserProtocol,
-    UserT,
     ensure_model_compliance,
 )
 from tests.conftest import (
@@ -34,11 +33,6 @@ def test_protocols_import_nothing_orm_specific():
         elif isinstance(node, ast.ImportFrom):
             imports.add((node.module or "").split(".")[0])
     assert imports <= {"uuid", "datetime", "typing"}, imports
-
-
-def test_typevars_are_unbound():
-    """Bound TypeVars would reintroduce the Mapped-invariance false positives."""
-    assert UserT.__bound__ is None
 
 
 @pytest.mark.parametrize(

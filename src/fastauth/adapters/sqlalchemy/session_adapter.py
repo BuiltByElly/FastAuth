@@ -16,7 +16,6 @@ from fastauth.adapters.sqlalchemy.mixins import (
 )
 from fastauth.config import JWTConfig
 from fastauth.protocols import OIDCAccountT, SessionT, UserT
-from fastauth.schemas import OIDCUserInfo
 from fastauth.security import hash_password
 
 from .models import (

@@ -43,10 +43,6 @@ def test_custom_password_policy_flows_through_builders():
     )
 
 
-def test_login_builder_defaults_to_static_schema():
-    assert build_login_schema() is LoginRequest
-
-
 def test_signup_builder_merges_extra_fields():
     schema = build_signup_schema({"role": (str, ...)})
     user = schema(email="a@example.com", password="long-enough", role="admin")

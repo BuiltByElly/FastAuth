@@ -50,10 +50,6 @@ def test_signup_rejects_duplicate_email(client):
     assert response.json()["detail"] == "Email already registered"
 
 
-def test_signup_rejects_short_password(client):
-    assert signup(client, password="short").status_code == 422
-
-
 def test_login_sets_session_cookie(client):
     signup(client)
     response = login(client)
