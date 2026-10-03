@@ -3,8 +3,10 @@
 Password hashing helpers (argon2 via pwdlib by default).
 """
 
+import secrets
 from collections.abc import Callable
 
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pwdlib import PasswordHash
 from pwdlib.exceptions import UnknownHashError
 from pwdlib.hashers.argon2 import Argon2Hasher
@@ -85,3 +87,35 @@ Call ``verify_password(password, DUMMY_PASSWORD_HASH)`` before rejecting an
 unknown user, narrowing the timing gap between "no such user" and
 "wrong password" responses.
 """
+
+
+class OAuthStateManager:
+    """Issues and verifies the OIDC and OAuth2 `state` cookie.
+
+    One instance per `OIDCAuth` or `OAuth2Auth`, keyed off the library's own secret —
+    not the dev's session secret, so it stays isolated from whatever
+    else they store in cookies.
+    """
+
+    def __init__(self, secret_key: str, max_age: int = 300):
+        self.serializer = URLSafeTimedSerializer(secret_key, salt="fastauth-oidc-state")
+        self.max_age = max_age
+
+    def generate(self, provider: str) -> tuple[str, str]:
+        raw_state = secrets.token_urlsafe(32)
+        payload = {"state": raw_state, "provider": provider}
+        signed = self.serializer.dumps(payload)
+        return raw_state, signed
+
+    def verify(
+        self, cookie_value: str | None, returned_state: str | None, provider: str
+    ) -> bool:
+        if not cookie_value or not returned_state:
+            return False
+        try:
+            payload = self.serializer.loads(cookie_value, max_age=self.max_age)
+        except BadSignature, SignatureExpired:
+            return False
+        if payload.get("provider") != provider:
+            return False
+        return secrets.compare_digest(payload["state"], returned_state)

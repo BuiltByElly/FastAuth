@@ -11,11 +11,12 @@ from sqlalchemy.sql import delete
 
 from fastauth.adapters.adapters import Adapter
 from fastauth.adapters.sqlalchemy.mixins import (
+    OAuth2AccountAdapterMixin,
     OIDCAccountAdapterMixin,
     PasswordResetTokenAdapterMixin,
 )
 from fastauth.config import JWTConfig
-from fastauth.protocols import OIDCAccountT, SessionT, UserT
+from fastauth.protocols import OAuthAccountT, SessionT, UserT
 from fastauth.security import hash_password
 
 from .models import (
@@ -38,7 +39,8 @@ def _tagged_fields(model: type, flag: str) -> dict[str, tuple[type, Any]]:
 class SQLAlchemySessionAdapter(
     PasswordResetTokenAdapterMixin,
     OIDCAccountAdapterMixin,
-    Adapter[UserT, SessionT, OIDCAccountT],
+    OAuth2AccountAdapterMixin,
+    Adapter[UserT, SessionT, OAuthAccountT],
 ):
     """DB-backed credentials: sessions persisted as rows, expiry enforced."""
 
@@ -53,7 +55,7 @@ class SQLAlchemySessionAdapter(
         password_hasher: PasswordHash | None = None,
         password_reset_token_model: type[FastAuthPasswordResetTokensMixin]
         | None = None,
-        oidc_account_model: type[OIDCAccountT] | None = None,
+        oauth_account_model: type[OAuthAccountT] | None = None,
     ):
         """Bind a request session plus the app's User/Session models."""
         super().__init__(
@@ -65,7 +67,7 @@ class SQLAlchemySessionAdapter(
             session_expire_days,
             password_hasher,
             password_reset_token_model,
-            oidc_account_model,
+            oauth_account_model,
         )
 
     @classmethod
@@ -168,12 +170,12 @@ class SQLAlchemySessionAdapter(
             raise ValueError("password_reset_token_model is required")
         return self.password_reset_token_model  # type: ignore[return-value]
 
-    def require_oidc_account_model(
+    def require_oauth_account_model(
         self,
-    ) -> type[OIDCAccountT]:
-        if self.oidc_account_model is None:
-            raise ValueError("oidc_account_model is required")
-        return self.oidc_account_model
+    ) -> type[OAuthAccountT]:
+        if self.oauth_account_model is None:
+            raise ValueError("oauth_account_model is required")
+        return self.oauth_account_model
 
     def _require_session_model(
         self,

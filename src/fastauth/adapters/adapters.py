@@ -7,17 +7,17 @@ from pwdlib import PasswordHash
 
 from fastauth.config import JWTConfig
 from fastauth.protocols import (
-    OIDCAccountT,
+    OAuthAccountT,
     PasswordResetTokenT,
     RateLimitT,
     RefreshT,
     SessionT,
     UserT,
 )
-from fastauth.schemas import OIDCUserInfo
+from fastauth.types import OAuthUserInfo
 
 
-class Adapter[UserT, SessionT, OIDCAccountT](ABC):
+class Adapter[UserT, SessionT, OAuthAccountT](ABC):
     """Abstract base class for the JWT and Sessions strategy ORM adapters. Wraps one request-scoped session.
 
     Subclasses share method names; session vs JWT differ internally.
@@ -37,7 +37,7 @@ class Adapter[UserT, SessionT, OIDCAccountT](ABC):
         session_expire_days: int = 7,
         password_hasher: PasswordHash | None = None,
         password_reset_token_model: type[PasswordResetTokenT] | None = None,
-        oidc_account_model: type[OIDCAccountT] | None = None,
+        oauth_account_model: type[OAuthAccountT] | None = None,
     ):
         """Store the request-scoped session plus app models (no commit here).
 
@@ -53,7 +53,7 @@ class Adapter[UserT, SessionT, OIDCAccountT](ABC):
         self.session_expire_days = session_expire_days
         self.password_hasher = password_hasher
         self.password_reset_token_model = password_reset_token_model
-        self.oidc_account_model = oidc_account_model
+        self.oauth_account_model = oauth_account_model
 
     @classmethod
     @abstractmethod
@@ -103,17 +103,25 @@ class Adapter[UserT, SessionT, OIDCAccountT](ABC):
     ) -> type[PasswordResetTokenT]: ...
 
     @abstractmethod
-    def require_oidc_account_model(
+    def require_oauth_account_model(
         self,
-    ) -> type[OIDCAccountT]: ...
+    ) -> type[OAuthAccountT]: ...
 
     @abstractmethod
     async def get_oidc_account(
         self, provider: str, provider_user_id: str
-    ) -> OIDCAccountT: ...
+    ) -> OAuthAccountT: ...
 
     @abstractmethod
-    async def create_user_from_oidc(self, user_info: OIDCUserInfo) -> UserT: ...
+    async def create_user_from_oidc(self, user_info: OAuthUserInfo) -> UserT: ...
+
+    @abstractmethod
+    async def get_oauth2_account(
+        self, provider: str, provider_user_id: str
+    ) -> OAuthAccountT: ...
+
+    @abstractmethod
+    async def create_user_from_oauth2(self, user_info: OAuthUserInfo) -> UserT: ...
 
     async def issue_refresh_token(self, user: UserT) -> str:
         """Mint + store a refresh token (JWT-only; others raise)."""

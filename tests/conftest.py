@@ -21,7 +21,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from fastauth import JWTAuth, SessionAuth
 from fastauth.adapters.sqlalchemy.jwt_adapter import SQLAlchemyJWTAdapter
 from fastauth.adapters.sqlalchemy.models import (
-    FastAuthOIDCAccountMixin,
+    FastAuthOAuthAccountMixin,
     FastAuthPasswordResetTokensMixin,
     FastAuthRateLimitMixin,
     FastAuthRefreshTokenMixin,
@@ -104,7 +104,7 @@ class ExtraUser(Base, FastAuthUserMixin):
     internal_note: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
-class OIDCAccount(Base, FastAuthOIDCAccountMixin):
+class OIDCAccount(Base, FastAuthOAuthAccountMixin):
     """Test OIDC-account row linking a provider identity to a User."""
 
     __tablename__ = "oidc_accounts"
@@ -266,7 +266,7 @@ def build_oidc_app(get_db, config=None, strategy="session", **kwargs):
     auth = OIDCAuth(
         adapter=adapter,
         user_model=User,
-        oidc_account_model=OIDCAccount,
+        oauth_account_model=OIDCAccount,
         db_session_dependency=get_db,
         strategy=strategy,
         config=config,
@@ -330,7 +330,7 @@ def stub_oidc_provider(
     on the app under test routes through here.
     """
     from fastauth.oauth.oidc import OIDCProvider
-    from fastauth.schemas import OIDCUserInfo
+    from fastauth.types import OAuthUserInfo
 
     async def _authorize(self, redirect_uri, state):
         return (
@@ -339,7 +339,7 @@ def stub_oidc_provider(
         )
 
     async def _fetch_user_info(self, code, redirect_uri):
-        return OIDCUserInfo(
+        return OAuthUserInfo(
             provider=self.name,
             provider_user_id=sub,
             email=email,

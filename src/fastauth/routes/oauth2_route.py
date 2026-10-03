@@ -1,8 +1,10 @@
-"""OIDC login/callback routes — mounted on OIDCAuth.router.
+"""OAuth2 login/callback routes — mounted on OAuth2Auth.router.
 
 Login: generate state, redirect to provider.
 Callback: verify state, exchange code, resolve user, issue credentials
 via the same adapter method SessionAuth/JWTAuth's own login route uses.
+Unlike OIDC, the provider's own access/refresh token is handed to the
+dev via on_after_oauth2_login — FastAuth never persists it.
 """
 
 from datetime import UTC, datetime
@@ -25,28 +27,27 @@ from fastauth.cookies import (
     set_refresh_cookie,
     set_session_cookie,
 )
-from fastauth.routes.context import OIDCContext
+from fastauth.routes.context import OAuth2Context
 from fastauth.schemas import TokenResponse
 
+state_cookie_name = "fastauth_oauth2_state"
 
-def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
-    state_cookie_name = "fastauth_oidc_state"
-    cookies = ctx.config.cookies
+
+def register_oauth2_routes(router: APIRouter, ctx: OAuth2Context) -> None:
 
     DependsSession = Depends(ctx.db_session_dependency)
-    DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/{provider}/login"))
-    DependsCallbackLimit = Depends(ctx.rate_limiter.limit_for("/{provider}/callback"))
+    cookies = ctx.config.cookies
 
-    @router.get("/{provider}/login", dependencies=[DependsLoginLimit])
-    async def oidc_login(provider: str, request: Request):
+    @router.get("/{provider}/login")
+    async def oauth2_login(provider: str, request: Request):
         try:
-            oidc_provider = ctx.get_provider(provider)
+            oauth2_provider = ctx.get_provider(provider)
         except KeyError as e:
             raise HTTPException(404, str(e)) from None
 
         raw_state, signed = ctx.state_manager.generate(provider)
-        redirect_uri = str(request.url_for("oidc_callback", provider=provider))
-        auth_url = await oidc_provider.get_authorize_url(redirect_uri, raw_state)
+        redirect_uri = str(request.url_for("oauth2_callback", provider=provider))
+        auth_url = await oauth2_provider.get_authorize_url(redirect_uri, raw_state)
 
         redirect = RedirectResponse(auth_url)
         redirect.set_cookie(
@@ -54,29 +55,25 @@ def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
             signed,
             httponly=True,
             secure=cookies.secure,
-            samesite="lax",
+            samesite=cookies.samesite,
             path=cookies.path,
             domain=cookies.domain,
             max_age=300,
         )
         return redirect
 
-    @router.get(
-        "/{provider}/callback",
-        name="oidc_callback",
-        dependencies=[DependsCallbackLimit],
-    )
-    async def oidc_callback(
+    @router.get("/{provider}/callback", name="oauth2_callback")
+    async def oauth2_callback(
         provider: str,
         code: str,
         state: str,
         request: Request,
         response: Response,
-        db_session: Annotated[Any, DependsSession],
         bg_tasks: BackgroundTasks,
+        db_session: Annotated[Any, DependsSession],
     ):
         try:
-            oidc_provider = ctx.get_provider(provider)
+            oauth2_provider = ctx.get_provider(provider)
         except KeyError as e:
             raise HTTPException(404, str(e)) from None
 
@@ -85,14 +82,17 @@ def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
             raise HTTPException(400, "Invalid or expired state")
         response.delete_cookie(state_cookie_name)
 
-        redirect_uri = str(request.url_for("oidc_callback", provider=provider))
-        user_info = await oidc_provider.fetch_user_info(code, redirect_uri)
+        redirect_uri = str(request.url_for("oauth2_callback", provider=provider))
+        result = await oauth2_provider.fetch_user_info(code, redirect_uri)
 
         adapter = ctx.build_adapter(db_session)
-        account = await adapter.get_oidc_account(provider, user_info.provider_user_id)
+
+        account = await adapter.get_oauth2_account(
+            provider, result.user_info.provider_user_id
+        )
         if account is None:
             try:
-                user = await adapter.create_user_from_oidc(user_info)
+                user = await adapter.create_user_from_oauth2(result.user_info)
             except EmailAlreadyRegistered:
                 raise HTTPException(400, "Email already registered") from None
         else:
@@ -119,26 +119,32 @@ def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
                 **session_cookie_kwargs(cookies, max_age=max_age),
             )
 
-            # Run the after-login hook (fire and forget)
             bg_tasks.add_task(
-                ctx.oidc_login_hooks["run_after_oidc_login"], user_info, request
+                ctx.oauth2_login_hooks["run_after_oauth2_login"],
+                result,
+                request,
             )
             return {"success": True, "message": "Logged in successfully"}
 
-        access_token = str(await adapter.issue_credential(user))
-        refresh_token = await adapter.issue_refresh_token(user)
-        # Persist user/account/refresh rows — without this the minted token
-        # resolves to nothing and the IdP sign-in is lost on session close.
-        await db_session.commit()
-        set_refresh_cookie(
-            response,
-            refresh_token,
-            **refresh_cookie_kwargs(
-                cookies,
-                max_age=ctx.config.jwt.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
-            ),
-        )
+        else:
+            access_token = str(await adapter.issue_credential(user))
+            refresh_token = await adapter.issue_refresh_token(user)
+            # Persist user/account/refresh rows — without this the minted token
+            # resolves to nothing and the IdP sign-in is lost on session close.
+            await db_session.commit()
+            set_refresh_cookie(
+                response,
+                refresh_token,
+                **refresh_cookie_kwargs(
+                    cookies,
+                    max_age=ctx.config.jwt.refresh_token_expire_days * 24 * 60 * 60,  # type: ignore[union-attr]
+                ),
+            )
 
-        # Run the after-login hook (fire and forget)
-        bg_tasks.add_task(ctx.login_hooks["run_after_login"], user_info, request)  # type:ignore
-        return TokenResponse(access_token=access_token)
+            # Run the after-login hook (fire and forget)
+            bg_tasks.add_task(
+                ctx.oauth2_login_hooks["run_after_oauth2_login"],
+                result,
+                request,
+            )
+            return TokenResponse(access_token=access_token)

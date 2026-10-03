@@ -1,45 +1,10 @@
-import secrets
-
 import httpx2
 from authlib.integrations.httpx_client import AsyncOAuth2Client
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from joserfc import jwt
 from joserfc.jwk import KeySet
 from joserfc.jwt import JWTClaimsRegistry
 
-from fastauth.schemas import OIDCUserInfo
-
-
-class OIDCStateManager:
-    """Issues and verifies the OIDC `state` cookie.
-
-    One instance per `OIDCAuth`, keyed off the library's own secret —
-    not the dev's session secret, so it stays isolated from whatever
-    else they store in cookies.
-    """
-
-    def __init__(self, secret_key: str, max_age: int = 300):
-        self.serializer = URLSafeTimedSerializer(secret_key, salt="fastauth-oidc-state")
-        self.max_age = max_age
-
-    def generate(self, provider: str) -> tuple[str, str]:
-        raw_state = secrets.token_urlsafe(32)
-        payload = {"state": raw_state, "provider": provider}
-        signed = self.serializer.dumps(payload)
-        return raw_state, signed
-
-    def verify(
-        self, cookie_value: str | None, returned_state: str | None, provider: str
-    ) -> bool:
-        if not cookie_value or not returned_state:
-            return False
-        try:
-            payload = self.serializer.loads(cookie_value, max_age=self.max_age)
-        except BadSignature, SignatureExpired:
-            return False
-        if payload.get("provider") != provider:
-            return False
-        return secrets.compare_digest(payload["state"], returned_state)
+from fastauth.types import OAuthUserInfo
 
 
 class OIDCProvider:
@@ -79,7 +44,7 @@ class OIDCProvider:
         )
         return uri
 
-    async def fetch_user_info(self, code: str, redirect_uri: str) -> OIDCUserInfo:
+    async def fetch_user_info(self, code: str, redirect_uri: str) -> OAuthUserInfo:
         metadata = await self._get_metadata()
         client = AsyncOAuth2Client(
             self.client_id, self.client_secret, redirect_uri=redirect_uri
@@ -103,11 +68,11 @@ class OIDCProvider:
 
         return self._normalize(decoded.claims)
 
-    def _normalize(self, claims: dict) -> OIDCUserInfo:
+    def _normalize(self, claims: dict) -> OAuthUserInfo:
         known_keys = {"sub", "email", "email_verified", "name", "picture"}
         others = {k: v for k, v in claims.items() if k not in known_keys}
 
-        return OIDCUserInfo(
+        return OAuthUserInfo(
             provider=self.name,
             provider_user_id=claims["sub"],
             email=claims.get("email"),

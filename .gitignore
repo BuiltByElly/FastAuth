@@ -19,3 +19,4 @@ notes.txt
 examples/basic/test.db
 examples/jwt_example/test_jwt.db
 examples/oauth/.env
+examples/oidc/.env

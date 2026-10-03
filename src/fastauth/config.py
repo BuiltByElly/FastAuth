@@ -9,6 +9,7 @@ so bad values fail at startup instead of in production.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from pydantic import (
@@ -18,6 +19,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from fastauth.types import OAuthUserInfo
 
 SameSite = Literal["lax", "strict", "none"]
 JWTAlgorithm = Literal["HS256", "HS384", "HS512"]
@@ -182,6 +185,45 @@ class OIDCConfig(BaseModel):
         return v
 
 
+class OAuth2ProviderConfig(BaseModel):
+    name: str  # "github", "twitter", etc.
+    client_id: str
+    client_secret: str
+    redirect_uri: str
+    authorization_url: str
+    token_url: str
+    userinfo_url: str
+    scopes: list[str] = Field(default_factory=list)
+    map_profile_to_user: Callable[[dict], Awaitable[OAuthUserInfo]]
+    """Dev-supplied mapping from this provider's raw profile JSON to
+    FastAuth's normalized OAuthUserInfo — async, so it can make a
+    follow-up API call if needed (e.g. GitHub's separate emails endpoint)."""
+    extra_authorize_params: dict[str, str] = Field(default_factory=dict)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class OAuth2Config(BaseModel):
+    """Plain-OAuth2 strategy settings — one secret shared across all providers."""
+
+    model_config = ConfigDict(frozen=True)
+
+    secret_key: str = Field(min_length=32, max_length=512)
+    """Signs the OAuth state cookie. Separate from oidc.secret_key and
+    jwt.secret_key — rotating one doesn't invalidate the others."""
+
+    providers: list[OAuth2ProviderConfig] = Field(default_factory=list)
+
+    @field_validator("secret_key")
+    @classmethod
+    def _reject_placeholders(cls, v: str) -> str:
+        if v.strip().lower() in {"change-me", "changeme", "secret", "password", "test"}:
+            raise ValueError(
+                "oauth2 secret_key must not be a placeholder value. Use `openssl rand -hex 32` to generate a secure key."
+            )
+        return v
+
+
 class FastAuthConfig(BaseModel):
     """Single config object for `FastAuth(..., config=...)`.
 
@@ -197,6 +239,7 @@ class FastAuthConfig(BaseModel):
     password: PasswordConfig = PasswordConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()
     oidc: OIDCConfig | None = None
+    oauth2: OAuth2Config | None = None
 
     """Required iff strategy="jwt" (validated in `FastAuth.__init__`)."""
     jwt: JWTConfig | None = None

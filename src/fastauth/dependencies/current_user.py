@@ -14,14 +14,14 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # from fastauth.cookies import REFRESH_COOKIE_NAME
-from fastauth.routes.context import AuthContext
+from fastauth.routes.context import AuthContext, OAuth2Context, OIDCContext
 
 # Shared bearer scheme (auto_error=False so we raise 401, not 403).
 security = HTTPBearer(auto_error=False)
 
 
 def session_current_user(
-    ctx: AuthContext,
+    ctx: AuthContext | OIDCContext | OAuth2Context,
 ) -> Callable[..., Awaitable[Any]]:
     """Build a dependency resolving the user from the session cookie."""
 
@@ -40,7 +40,9 @@ def session_current_user(
     return _dependency
 
 
-def jwt_current_user(ctx: AuthContext) -> Callable[..., Awaitable[Any]]:
+def jwt_current_user(
+    ctx: AuthContext | OIDCContext | OAuth2Context,
+) -> Callable[..., Awaitable[Any]]:
     """Build a dependency resolving the user from the bearer access token."""
 
     async def _dependency(

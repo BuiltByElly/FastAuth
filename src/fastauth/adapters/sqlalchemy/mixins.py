@@ -8,15 +8,15 @@ from sqlalchemy.exc import IntegrityError
 
 from fastauth.adapters import Adapter
 from fastauth.adapters.exceptions import EmailAlreadyRegistered
-from fastauth.protocols import OIDCAccountT, UserT
-from fastauth.schemas import OIDCUserInfo
+from fastauth.protocols import OAuthAccountT, UserT
+from fastauth.types import OAuthUserInfo
 
 
-class OIDCAccountAdapterMixin(Adapter[UserT, OIDCAccountT, Any]):
-    async def get_oidc_account(
+class OAuth2AccountAdapterMixin(Adapter[UserT, OAuthAccountT, Any]):
+    async def get_oauth2_account(
         self, provider: str, provider_user_id: str
-    ) -> OIDCAccountT | None:
-        model = self.require_oidc_account_model()
+    ) -> OAuthAccountT | None:
+        model = self.require_oauth_account_model()
         result = await self.db_session.execute(
             select(model).where(
                 model.provider == provider,
@@ -25,7 +25,47 @@ class OIDCAccountAdapterMixin(Adapter[UserT, OIDCAccountT, Any]):
         )
         return result.scalar_one_or_none()
 
-    async def create_user_from_oidc(self, user_info: OIDCUserInfo) -> UserT:
+    async def create_user_from_oauth2(self, user_info: OAuthUserInfo) -> UserT:
+        user = self.user_model(
+            email=user_info.email,  # type:ignore
+            is_active=True,  # type:ignore
+        )
+        self.db_session.add(user)
+
+        try:
+            await self.db_session.flush()
+        except IntegrityError as e:
+            # The email already belongs to an account (typically a password
+            # one). An IdP email claim must never implicitly take it over.
+            await self.db_session.rollback()
+            raise EmailAlreadyRegistered(user_info.email) from e
+
+        model = self.require_oauth_account_model()
+        account = model(
+            user_id=user.id,  # type:ignore
+            provider=user_info.provider,
+            provider_user_id=user_info.provider_user_id,
+        )
+        self.db_session.add(account)
+        await self.db_session.flush()
+
+        return user
+
+
+class OIDCAccountAdapterMixin(Adapter[UserT, OAuthAccountT, Any]):
+    async def get_oidc_account(
+        self, provider: str, provider_user_id: str
+    ) -> OAuthAccountT | None:
+        model = self.require_oauth_account_model()
+        result = await self.db_session.execute(
+            select(model).where(
+                model.provider == provider,
+                model.provider_user_id == provider_user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_user_from_oidc(self, user_info: OAuthUserInfo) -> UserT:
         user = self.user_model(
             email=user_info.email,  # type: ignore
             is_active=True,  # type: ignore
@@ -39,7 +79,7 @@ class OIDCAccountAdapterMixin(Adapter[UserT, OIDCAccountT, Any]):
             await self.db_session.rollback()
             raise EmailAlreadyRegistered(user_info.email) from e
 
-        model = self.require_oidc_account_model()
+        model = self.require_oauth_account_model()
         account = model(
             user_id=user.id,  # type: ignore
             provider=user_info.provider,
