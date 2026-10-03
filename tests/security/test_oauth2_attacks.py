@@ -5,9 +5,9 @@ FastAuth's own verification, never the network.
 
 Deliberately narrower than `test_oidc_attacks.py`: both strategies share
 `OAuthStateManager` and the same account-abuse guards, so the exhaustive
-state edge cases (expiry, cross-provider binding) and rate-limit probes are
-not duplicated here — only the core paths unique to the OAuth2 route
-(cookie name, redirect, token handoff) plus fail-closed account handling.
+state edge cases (expiry, cross-provider binding) are not duplicated here —
+only the core paths unique to the OAuth2 route (cookie name, redirect, token
+handoff) plus fail-closed account handling and the route's own rate limits.
 """
 
 import pytest
@@ -189,3 +189,28 @@ async def test_orphaned_account_row_fails_closed(
             assert (await session.execute(select(User))).scalars().all() == []
             accounts = (await session.execute(select(OAuth2Account))).scalars().all()
             assert len(accounts) == 1  # row remains, but grants nothing
+
+
+# --- rate limiting ------------------------------------------------------------
+
+
+def test_oauth2_login_is_rate_limited(get_db, oauth2_test_config, monkeypatch):
+    stub_oauth2_provider(monkeypatch)
+    config = oauth2_test_config.model_copy(update={"rate_limit": RateLimitConfig()})
+    app, _ = build_oauth2_app(get_db, config=config)
+    with TestClient(app, follow_redirects=False) as client:
+        codes = [client.get("/auth/oauth2/github/login").status_code for _ in range(12)]
+    assert codes == [307] * 10 + [429, 429]
+
+
+def test_oauth2_callback_is_rate_limited(get_db, oauth2_test_config, monkeypatch):
+    """Rejected states still spend the budget — floods can't probe for free."""
+    stub_oauth2_provider(monkeypatch)
+    config = oauth2_test_config.model_copy(update={"rate_limit": RateLimitConfig()})
+    app, _ = build_oauth2_app(get_db, config=config)
+    with TestClient(app, follow_redirects=False) as client:
+        codes = [
+            client.get("/auth/oauth2/github/callback?code=x&state=y").status_code
+            for _ in range(6)
+        ]
+    assert codes == [400] * 5 + [429]
