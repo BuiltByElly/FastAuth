@@ -33,11 +33,13 @@ from fastauth.config import (
     CookieConfig,
     FastAuthConfig,
     JWTConfig,
+    OAuth2Config,
+    OAuth2ProviderConfig,
     OIDCConfig,
     OIDCProviderConfig,
     RateLimitConfig,
 )
-from fastauth.core import OIDCAuth
+from fastauth.core import OAuth2Auth, OIDCAuth
 
 TEST_SECRET = "0123456789abcdef" * 3  # 48 chars, not a placeholder
 
@@ -114,6 +116,20 @@ class OIDCAccount(Base, FastAuthOAuthAccountMixin):
     __table_args__ = (
         UniqueConstraint(
             "provider", "provider_user_id", name="uq_oidc_provider_account"
+        ),
+    )
+
+
+class OAuth2Account(Base, FastAuthOAuthAccountMixin):
+    """Test OAuth2-account row linking a provider identity to a User."""
+
+    __tablename__ = "oauth2_accounts"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "provider_user_id", name="uq_oauth2_provider_account"
         ),
     )
 
@@ -208,6 +224,51 @@ def oidc_test_config(oidc_config):
     )
 
 
+async def map_github_profile(profile: dict):
+    """Test mapper: GitHub-style profile JSON -> normalized user info."""
+    from fastauth.types import OAuthUserInfo
+
+    return OAuthUserInfo(
+        provider="github",
+        provider_user_id=str(profile["id"]),
+        email=profile.get("email"),
+        email_verified=True,
+        name=profile.get("name") or profile.get("login"),
+        avatar_url=profile.get("avatar_url"),
+    )
+
+
+@pytest.fixture
+def oauth2_config():
+    """One registered 'github' provider; the IdP itself is always stubbed."""
+    return OAuth2Config(
+        secret_key="p" * 40,
+        providers=[
+            OAuth2ProviderConfig(
+                name="github",
+                client_id="test-client-id",
+                client_secret="test-client-secret",
+                redirect_uri="http://testserver/auth/oauth2/github/callback",
+                authorization_url="https://provider.example/authorize",
+                token_url="https://provider.example/token",
+                userinfo_url="https://provider.example/user",
+                scopes=["read:user"],
+                map_profile_to_user=map_github_profile,
+            )
+        ],
+    )
+
+
+@pytest.fixture
+def oauth2_test_config(oauth2_config):
+    """Non-secure-cookie, rate-limit-free config for OAuth2 flow tests."""
+    return FastAuthConfig(
+        cookies=CookieConfig(secure=False),
+        rate_limit=RateLimitConfig(enabled=False),
+        oauth2=oauth2_config,
+    )
+
+
 def build_session_app(get_db, config=None, **kwargs):
     """SessionAuth app with a /protected route behind `auth.current_user`."""
     kwargs.setdefault("password_reset_token_model", PasswordResetToken)
@@ -267,6 +328,37 @@ def build_oidc_app(get_db, config=None, strategy="session", **kwargs):
         adapter=adapter,
         user_model=User,
         oauth_account_model=OIDCAccount,
+        db_session_dependency=get_db,
+        strategy=strategy,
+        config=config,
+        **kwargs,
+    )
+    app = FastAPI()
+    app.include_router(auth.router)
+
+    @app.get("/protected")
+    async def protected(user: Annotated[Any, Depends(auth.current_user)]):
+        return {"email": user.email}
+
+    return app, auth
+
+
+def build_oauth2_app(get_db, config=None, strategy="session", **kwargs):
+    """OAuth2Auth app with a /protected route behind `auth.current_user`.
+
+    Mirrors `build_oidc_app`: `strategy` picks the credential backend, the
+    IdP is stubbed with `stub_oauth2_provider` — nothing reaches the network.
+    """
+    if strategy == "session":
+        kwargs.setdefault("session_model", Session)
+        adapter = SQLAlchemySessionAdapter
+    else:
+        kwargs.setdefault("refresh_model", RefreshToken)
+        adapter = SQLAlchemyJWTAdapter
+    auth = OAuth2Auth(
+        adapter=adapter,
+        user_model=User,
+        oauth_account_model=OAuth2Account,
         db_session_dependency=get_db,
         strategy=strategy,
         config=config,
@@ -360,11 +452,61 @@ def oidc_begin(client, provider="google"):
     return parse_qs(urlparse(location).query)["state"][0]
 
 
+def stub_oauth2_provider(
+    monkeypatch,
+    *,
+    provider_user_id="gh-1",
+    email="u@example.com",
+    access_token="provider-at",
+):
+    """Stub the OAuth2 IdP: authorize redirect + token/userinfo fetch.
+
+    Patches `OAuth2Provider` at the class level, so every provider registered
+    on the app under test routes through here. Returns OAuth2LoginResult —
+    the provider's own tokens are carried on it, never persisted.
+    """
+    from fastauth.oauth.oauth2 import OAuth2Provider
+    from fastauth.types import OAuth2LoginResult, OAuthUserInfo
+
+    async def _authorize(self, redirect_uri, state):
+        return (
+            f"https://provider.example/authorize?client_id={self.client_id}"
+            f"&redirect_uri={redirect_uri}&state={state}"
+        )
+
+    async def _fetch_user_info(self, code, redirect_uri):
+        return OAuth2LoginResult(
+            user_info=OAuthUserInfo(
+                provider=self.name,
+                provider_user_id=provider_user_id,
+                email=email,
+                email_verified=True,
+                name="Test User",
+                avatar_url=None,
+            ),
+            access_token=access_token,
+            refresh_token=None,
+            expires_at=None,
+        )
+
+    monkeypatch.setattr(OAuth2Provider, "get_authorize_url", _authorize)
+    monkeypatch.setattr(OAuth2Provider, "fetch_user_info", _fetch_user_info)
+
+
+def oauth2_begin(client, provider="github"):
+    """Start an OAuth2 login: assert the provider redirect, return raw state."""
+    response = client.get(f"/auth/oauth2/{provider}/login")
+    assert response.status_code == 307, response.text
+    location = response.headers["location"]
+    return parse_qs(urlparse(location).query)["state"][0]
+
+
 __all__ = [
     "TEST_SECRET",
     "Base",
     "ExtraPasswordResetToken",
     "ExtraUser",
+    "OAuth2Account",
     "OIDCAccount",
     "PasswordResetToken",
     "RateLimitRow",
@@ -372,10 +514,14 @@ __all__ = [
     "Session",
     "User",
     "build_jwt_app",
+    "build_oauth2_app",
     "build_oidc_app",
     "build_session_app",
     "cookie_value",
     "create_user",
+    "map_github_profile",
+    "oauth2_begin",
     "oidc_begin",
+    "stub_oauth2_provider",
     "stub_oidc_provider",
 ]

@@ -4,7 +4,6 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-import httpx2
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
