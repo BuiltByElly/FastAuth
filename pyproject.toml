@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "The most simple and flexible auth system for FastAPI"
 readme = "README.md"
 authors = [
-    { name = "Elly", email = "ellyeroms@outlook.com" }
+    { name = "Elliot Otoijagha", email = "ellyeroms@outlook.com" }
 ]
 requires-python = ">=3.14"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
     "pwdlib[argon2]>=0.3.1",
     "pydantic[email]>=2.13.5",
     "pyjwt>=2.10.1",
+    "redis>=8.1.0",
     "sqlalchemy[asyncio]>=2.0.53",
     "uuid6>=2025.0.1",
 ]

@@ -165,10 +165,6 @@ class Adapter[UserT, SessionT, OAuthAccountT](ABC):
 
 
 class RateLimiterAdapter[RateLimitT](ABC):
-    def __init__(self, db_session: Any, model: type[RateLimitT]):
-        self.db_session = db_session
-        self.model = model
-
     @abstractmethod
     async def check(self, key: str, window: int, max_requests: int) -> bool:
         """True if allowed (and increments count), False if over limit."""

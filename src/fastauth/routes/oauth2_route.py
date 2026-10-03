@@ -36,9 +36,11 @@ state_cookie_name = "fastauth_oauth2_state"
 def register_oauth2_routes(router: APIRouter, ctx: OAuth2Context) -> None:
 
     DependsSession = Depends(ctx.db_session_dependency)
+    DependsLoginLimit = Depends(ctx.rate_limiter.limit_for("/{provider}/login"))
+    DependsCallbackLimit = Depends(ctx.rate_limiter.limit_for("/{provider}/callback"))
     cookies = ctx.config.cookies
 
-    @router.get("/{provider}/login")
+    @router.get("/{provider}/login", dependencies=[DependsLoginLimit])
     async def oauth2_login(provider: str, request: Request):
         try:
             oauth2_provider = ctx.get_provider(provider)
@@ -62,7 +64,11 @@ def register_oauth2_routes(router: APIRouter, ctx: OAuth2Context) -> None:
         )
         return redirect
 
-    @router.get("/{provider}/callback", name="oauth2_callback")
+    @router.get(
+        "/{provider}/callback",
+        name="oauth2_callback",
+        dependencies=[DependsCallbackLimit],
+    )
     async def oauth2_callback(
         provider: str,
         code: str,

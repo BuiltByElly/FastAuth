@@ -47,7 +47,7 @@ class RateLimitConfig(BaseModel):
     max_requests: int = Field(default=100, gt=0)
     # Memory by default so FastAuth works with zero setup (single process).
     # Switch to "database" + a rate_limit_model for multi-worker deployments.
-    storage: Literal["database", "memory"] = "memory"
+    storage: Literal["database", "memory", "redis"] = "memory"
     trusted_ip_header: str | None = None
 
     custom_rules: dict[str, tuple[int, int]] = Field(

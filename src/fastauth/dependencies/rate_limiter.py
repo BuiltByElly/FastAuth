@@ -12,6 +12,7 @@ the dev-picked ORM adapter per request. Disabled → no-ops, nothing raises.
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Annotated, Any
 
+import redis.asyncio as redis
 from fastapi import Depends, HTTPException, Request
 
 from fastauth.adapters.adapters import RateLimiterAdapter
@@ -35,14 +36,18 @@ class RateLimiter:
         db_session_dependency: Callable[[], AsyncGenerator[Any]] | None = None,
         rate_limit_model: type[RateLimitT] | None = None,
         rate_limit_config: RateLimitConfig | None = None,
+        redis_client: redis.Redis | None = None,
     ):
         """Bind storage backend once; lives for the app lifetime.
 
         Args:
-            rate_limiter_adapter: ORM adapter class (required for database storage).
+            rate_limiter_adapter: Adapter class (required for database
+                and redis storage).
             db_session_dependency: FastAPI dep yielding an AsyncSession (database only).
             rate_limit_model: App rate-limit model (database storage only).
             rate_limit_config: Limits, storage, per-route rules. Disabled → no-ops.
+            redis_client: Asyncio Redis client (redis storage only). Create it
+                after forking (e.g. in lifespan) so each worker owns its sockets.
         """
         self._config = rate_limit_config or RateLimitConfig()
         self._dependency: Callable[..., Awaitable[RateLimiterAdapter]] | None = None
@@ -73,10 +78,24 @@ class RateLimiter:
                 db_session: Annotated[Any, Depends(db_session_dependency)],
             ) -> RateLimiterAdapter:
                 return rate_limiter_adapter(
-                    db_session=db_session, model=rate_limit_model
+                    db_session=db_session,  # type: ignore
+                    model=rate_limit_model,  # type: ignore
                 )
 
             self._dependency = _provide_db
+
+        elif self._config.storage == "redis":
+            if redis_client is None:
+                raise ValueError("storage='redis' requires a redis_client.")
+            if rate_limiter_adapter is None:
+                raise ValueError("storage='redis' requires a rate_limiter_adapter.")
+
+            async def _provide_redis() -> RateLimiterAdapter:
+                return rate_limiter_adapter(
+                    redis_client=redis_client,  # type: ignore
+                )
+
+            self._dependency = _provide_redis
 
         else:
             raise ValueError(f"Unknown rate limit storage: {self._config.storage!r}")
