@@ -1,10 +1,10 @@
 [project]
-name = "fastauth"
+name = "builtbyelly-fastauth"
 version = "0.1.0"
-description = "The most simple and flexible auth system for FastAPI"
+description = "Simple and flexible authentication library for FastAPI — FastAPI-only by design."
 readme = "README.md"
 authors = [
-    { name = "Elliot Otoijagha", email = "ellyeroms@outlook.com" }
+    { name = "Elliot Otoijagha", email = "eroms072020@gmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = [
