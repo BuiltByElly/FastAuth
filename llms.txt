@@ -5,7 +5,7 @@ FastAPI-native async auth library. One class per strategy, one frozen `FastAuthC
 ## Install
 
 ```bash
-uv add fastauth        # ships SQLAlchemy + redis client, no extras
+uv add builtbyelly-fastauth  # ships SQLAlchemy + redis client, no extras
 uv add aiosqlite       # async DB driver (SQLite example)
 ```
 

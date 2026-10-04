@@ -24,6 +24,20 @@ Working now:
 - **Event hooks** — before/observer hooks on signup, login, logout, refresh, password reset, and OAuth logins
 - **Config validation** — bad values fail at startup, not in production
 
+## Installation
+
+Requires Python 3.14+ and [`uv`](https://docs.astral.sh/uv/).
+
+```bash
+uv add builtbyelly-fastauth
+```
+
+SQLAlchemy and the redis client ship in the default install — no extras. Optional dependencies for other ORMs will arrive over time as more backends land. Add an async DB driver for your database:
+
+```bash
+uv add aiosqlite   # SQLite, as used in examples/
+```
+
 ## Quickstart
 
 Define models with the mixins, build the auth instance, mount the router, protect routes with `auth.current_user` (from `examples/basic/main.py`):

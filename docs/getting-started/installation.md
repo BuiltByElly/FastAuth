@@ -3,7 +3,7 @@
 Requires Python 3.14+ and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-uv add fastauth
+uv add builtbyelly-fastauth
 ```
 
 SQLAlchemy and the redis client ship **in the default install** — no extras to pick. There are no `fastauth[sqlalchemy]` / `fastauth[redis]` variants today; optional dependencies for other ORMs will arrive over time as more backends land.
