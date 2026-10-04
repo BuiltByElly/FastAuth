@@ -106,7 +106,7 @@ def test_database_storage_requires_model_and_adapter():
     with pytest.raises(ValueError, match="rate_limiter_adapter"):
         RateLimiter(
             rate_limit_model=object,
-            db_session_dependency=lambda: None,
+            db_session_dependency=None,
             rate_limit_config=cfg,
         )
 
@@ -128,7 +128,7 @@ async def redis_client():
     client = redis.Redis(host="localhost", port=6379, db=15)
     try:
         await client.ping()
-    except Exception:
+    except Exception:  # noqa
         await client.aclose()
         pytest.skip("redis-server not available at localhost:6379")
     await client.flushdb()

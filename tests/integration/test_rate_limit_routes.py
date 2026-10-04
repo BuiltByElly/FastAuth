@@ -46,7 +46,7 @@ async def redis_client():
     client = redis.Redis(host="localhost", port=6379, db=15)
     try:
         await client.ping()
-    except Exception:
+    except Exception:  # noqa
         await client.aclose()
         pytest.skip("redis-server not available at localhost:6379")
     await client.flushdb()
@@ -191,9 +191,7 @@ def test_explicit_limiter_wins_over_config_and_warns(get_db):
         rate_limit=RateLimitConfig(custom_rules={"/login": (60, 100)}),
     )
     with pytest.warns(UserWarning, match="config.rate_limit section is ignored"):
-        app, _ = build_session_app(
-            get_db, config=conflicting, rate_limiter=limiter
-        )
+        app, _ = build_session_app(get_db, config=conflicting, rate_limiter=limiter)
     with TestClient(app) as client:
         assert login(client).status_code == 401
         # Limiter's rule of 1 wins — not the config's 100.

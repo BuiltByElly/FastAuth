@@ -9,7 +9,6 @@ from fastauth.config import JWTConfig
 from fastauth.protocols import (
     OAuthAccountT,
     PasswordResetTokenT,
-    RateLimitT,
     RefreshT,
     SessionT,
     UserT,
