@@ -1,6 +1,8 @@
 # FastAuth
 
-Simple, flexible auth for FastAPI — Better Auth-style DX, FastAPI-only by design.
+Simple and flexible authentication library for FastAPI — FastAPI-only by design.
+
+Session, JWT, OIDC, and plain OAuth2 strategies. One class per strategy, one config object, your own SQLAlchemy or any ORM models. Asynchronous end to end.
 
 ## What it is
 
