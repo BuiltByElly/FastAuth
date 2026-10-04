@@ -25,7 +25,7 @@ jobs:
       - name: Explicitly provision Ruff
         run: |
           uv tool install ruff #
-          uvx ruff check .
+          uvx ruff check . --fix
 
 
       - name: Run tests with coverage
