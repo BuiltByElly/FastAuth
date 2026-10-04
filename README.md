@@ -99,6 +99,7 @@ That mounts `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `POST 
 ## Docs
 
 Full docs live in `docs/` (zensical): `uvx zensical serve`. Start at `docs/getting-started/quickstart.md`. `ARCHITECTURE.md` covers the internals. Agents: see `llms.txt` (library use) and `AGENTS.md` (contributing).
+Link to docs: [https://builtbyelly.github.io/FastAuth/](https://builtbyelly.github.io/FastAuth/)
 
 ## License
 
