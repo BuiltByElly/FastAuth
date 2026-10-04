@@ -1,0 +1,18 @@
+/* docs/stylesheets/extra.css */
+
+:root {
+  --md-primary-fg-color: #4f46e5;
+  --md-primary-fg-color--light: #6366f1;
+  --md-primary-fg-color--dark: #4338ca;
+}
+
+/* tighter code block corners, slightly larger font for readability */
+.md-typeset pre > code {
+  font-size: 0.85rem;
+  border-radius: 6px;
+}
+
+/* make inline code stand out a touch more against prose */
+.md-typeset code {
+  background-color: rgba(79, 70, 229, 0.08);
+}

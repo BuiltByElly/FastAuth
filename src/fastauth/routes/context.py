@@ -13,7 +13,9 @@ from pydantic import BaseModel
 from fastauth.adapters.adapters import Adapter
 from fastauth.config import FastAuthConfig
 from fastauth.dependencies.rate_limiter import RateLimiter
-from fastauth.oauth.oidc import OIDCProvider, OIDCStateManager
+from fastauth.oauth.oauth2 import OAuth2Provider
+from fastauth.oauth.oidc import OIDCProvider
+from fastauth.security import OAuthStateManager
 
 
 @dataclass
@@ -65,16 +67,16 @@ class OIDCContext:
 
     adapter_class: type[Adapter]
     user_model: type[Any]
-    oidc_account_model: type[Any]
+    oauth_account_model: type[Any]
     session_model: type[Any] | None
     refresh_model: type[Any] | None
     db_session_dependency: Callable[[], AsyncGenerator[Any]]
     strategy: Literal["session", "jwt"]
     config: FastAuthConfig
-    state_manager: OIDCStateManager
+    state_manager: OAuthStateManager
     providers: dict[str, OIDCProvider]
     rate_limiter: RateLimiter
-    login_hooks: dict[str, Callable[[Any, Request], Awaitable[Any]]]
+    oidc_login_hooks: dict[str, Callable[[Any, Request], Awaitable[Any]]]
 
     def build_adapter(self, session: Any) -> Adapter:
         """Instantiate the adapter bound to this request's DB session."""
@@ -85,7 +87,7 @@ class OIDCContext:
             jwt_config=self.config.jwt,
             refresh_model=self.refresh_model,
             session_expire_days=self.config.session.expire_days,
-            oidc_account_model=self.oidc_account_model,
+            oauth_account_model=self.oauth_account_model,
         )
 
     def get_provider(self, name: str) -> OIDCProvider:
@@ -94,4 +96,40 @@ class OIDCContext:
             return self.providers[name]
         except KeyError:
             msg = f"Unknown OIDC provider: {name!r}. Registered: {list(self.providers)}"
+            raise KeyError(msg) from None
+
+
+@dataclass
+class OAuth2Context:
+    adapter_class: type[Adapter]
+    user_model: type[Any]
+    oauth_account_model: type[Any]
+    session_model: type[Any] | None
+    refresh_model: type[Any] | None
+    db_session_dependency: Callable[[], AsyncGenerator[Any]]
+    strategy: Literal["session", "jwt"]
+    config: FastAuthConfig
+    state_manager: OAuthStateManager
+    providers: dict[str, OAuth2Provider]
+    rate_limiter: RateLimiter
+    oauth2_login_hooks: dict[str, Callable[[Any, Request], Awaitable[Any]]]
+
+    def build_adapter(self, session: Any) -> Adapter:
+        return self.adapter_class(
+            db_session=session,
+            user_model=self.user_model,
+            session_model=self.session_model,
+            jwt_config=self.config.jwt,
+            refresh_model=self.refresh_model,
+            session_expire_days=self.config.session.expire_days,
+            oauth_account_model=self.oauth_account_model,
+        )
+
+    def get_provider(self, name: str) -> OAuth2Provider:
+        try:
+            return self.providers[name]
+        except KeyError:
+            msg = (
+                f"Unknown OAuth2 provider: {name!r}. Registered: {list(self.providers)}"
+            )
             raise KeyError(msg) from None

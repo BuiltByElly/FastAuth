@@ -1,10 +1,12 @@
-"""Integration: rate limits enforced on auth routes (memory + database)."""
+"""Integration: rate limits enforced on auth routes (memory + database + redis)."""
 
 from typing import Literal
 
 import pytest
+import redis.asyncio as redis
 from fastapi.testclient import TestClient
 
+from fastauth.adapters.rate_limit.redis import RedisRateLimiterAdapter
 from fastauth.adapters.rate_limit.sqlalchemy import SQLAlchemyRateLimiter
 from fastauth.config import CookieConfig, FastAuthConfig, RateLimitConfig
 from fastauth.dependencies.rate_limiter import RateLimiter
@@ -36,6 +38,30 @@ def limited_app(
         get_db, config=config, rate_limiter=rate_limiter, **kwargs
     )
     return app
+
+
+@pytest.fixture
+async def redis_client():
+    """Real redis on an isolated DB; skipped when no server is reachable."""
+    client = redis.Redis(host="localhost", port=6379, db=15)
+    try:
+        await client.ping()
+    except Exception:
+        await client.aclose()
+        pytest.skip("redis-server not available at localhost:6379")
+    await client.flushdb()
+    # Drop setup-loop connections: TestClient serves requests on its own
+    # portal loop, and asyncio connections can't cross loops. The pool
+    # reconnects lazily on first real use.
+    await client.aclose()
+    yield client
+    # Teardown runs back on the fixture loop, but the pooled sockets now
+    # belong to TestClient's portal loop — best-effort close only. The next
+    # setup's flushdb on the isolated DB keeps tests hermetic regardless.
+    try:
+        await client.aclose()
+    except RuntimeError:
+        pass
 
 
 def login(client, password="wrong-pass-1"):
@@ -125,6 +151,23 @@ def test_database_storage_requires_model_and_adapter(get_db):
                 rate_limit_model=RateLimitRow,
             ),
         )
+
+
+def test_redis_storage_enforces_limits(get_db, redis_client):
+    app = limited_app(
+        get_db,
+        {},
+        rate_limiter=RateLimiter(
+            rate_limiter_adapter=RedisRateLimiterAdapter,
+            redis_client=redis_client,
+            rate_limit_config=RateLimitConfig(
+                storage="redis", custom_rules={"/login": (60, 2)}
+            ),
+        ),
+    )
+    with TestClient(app) as client:
+        codes = [login(client).status_code for _ in range(3)]
+    assert codes == [401, 401, 429]
 
 
 def test_disabled_limiter_never_blocks(get_db):

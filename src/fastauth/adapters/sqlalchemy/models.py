@@ -202,22 +202,23 @@ class FastAuthPasswordResetTokensMixin:
     )
 
 
-class FastAuthOIDCAccountMixin:
-    """Links one OIDC identity to one of your users. Does not define
+class FastAuthOAuthAccountMixin:
+    """Links one OAuth identity to one of your users. Does not define
     `__tablename__`, `user_id`, or the unique constraint — you do.
+    Used by OIDCAuth and OAuth2Auth.
 
     Example:
     ```python
     import uuid
     from sqlalchemy import ForeignKey, UniqueConstraint
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-    from fastauth.adapters.sqlalchemy.models import FastAuthOIDCAccountMixin
+    from fastauth.adapters.sqlalchemy.models import FastAuthOAuthAccountMixin
 
     class Base(DeclarativeBase):
         pass
 
-    class OIDCAccount(Base, FastAuthOIDCAccountMixin):
-        __tablename__ = "oidc_accounts"
+    class OAuthAccount(Base, FastAuthOAuthAccountMixin):
+        __tablename__ = "oauth_accounts"
 
         # Required: link each token back to a user.
         # Replace "users.id" with your actual user table name if different.

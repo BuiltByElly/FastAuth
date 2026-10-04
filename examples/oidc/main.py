@@ -11,7 +11,7 @@ from starlette.config import Config
 
 from fastauth.adapters.sqlalchemy import SQLAlchemySessionAdapter
 from fastauth.adapters.sqlalchemy.models import (
-    FastAuthOIDCAccountMixin,
+    FastAuthOAuthAccountMixin,
     FastAuthSessionMixin,
     FastAuthUserMixin,
 )
@@ -52,7 +52,7 @@ class Session(Base, FastAuthSessionMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
 
-class OIDCAccount(Base, FastAuthOIDCAccountMixin):
+class OIDCAccount(Base, FastAuthOAuthAccountMixin):
     __tablename__ = "oidc_accounts"
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
@@ -102,7 +102,7 @@ oidc = OIDCAuth(
         oidc=OIDCConfig(secret_key=config("SECRET_KEY"), providers=[oidc_providers])
     ),
     db_session_dependency=get_db,
-    oidc_account_model=OIDCAccount,
+    oauth_account_model=OIDCAccount,
     strategy="session",
 )
 
@@ -114,6 +114,6 @@ async def root(current_user: Annotated[User | None, Depends(oidc.current_user)])
     return {"message": "Hello World"}
 
 
-@oidc.on_after_login
+@oidc.on_after_oidc_login
 async def _(user, request: Request):
     print("user", user)

@@ -4,10 +4,12 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from redis.asyncio import Redis
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fastauth import SessionAuth
+from fastauth.adapters.rate_limit.redis import RedisRateLimiterAdapter
 from fastauth.adapters.sqlalchemy import SQLAlchemySessionAdapter
 from fastauth.adapters.sqlalchemy.models import (
     FastAuthPasswordResetTokensMixin,
@@ -19,6 +21,7 @@ from fastauth.config import (
     FastAuthConfig,
     PasswordConfig,
 )
+from fastauth.dependencies.rate_limiter import RateLimiter
 from fastauth.hooks.exceptions import HookAbort
 from fastauth.hooks.models import LoginFailure, PasswordChanged, PasswordResetRequested
 
@@ -65,11 +68,22 @@ async def lifespan(app: FastAPI):
     """Create tables on startup, dispose engine on shutdown."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await redis_client.aclose()
     yield
+    await redis_client.aclose()
     await engine.dispose()
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Module-level handle only — no commands run before lifespan, so no sockets
+# exist yet that a fork could share (see lifespan startup reset above).
+redis_client = Redis.from_url("redis://localhost:6379")
+
+rate_limiter = RateLimiter(
+    rate_limiter_adapter=RedisRateLimiterAdapter,
+    redis_client=redis_client,
+)
 
 auth = SessionAuth(
     adapter=SQLAlchemySessionAdapter,
@@ -83,6 +97,7 @@ auth = SessionAuth(
     ),
     db_session_dependency=get_db,
     password_reset_token_model=PasswordResetTokenModel,
+    rate_limiter=rate_limiter,
 )
 
 app.include_router(auth.router)

@@ -54,7 +54,7 @@ def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
             signed,
             httponly=True,
             secure=cookies.secure,
-            samesite="lax",
+            samesite=cookies.samesite,
             path=cookies.path,
             domain=cookies.domain,
             max_age=300,
@@ -120,7 +120,9 @@ def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
             )
 
             # Run the after-login hook (fire and forget)
-            bg_tasks.add_task(ctx.login_hooks["run_after_login"], user_info, request)  # type:ignore
+            bg_tasks.add_task(
+                ctx.oidc_login_hooks["run_after_oidc_login"], user_info, request
+            )
             return {"success": True, "message": "Logged in successfully"}
 
         access_token = str(await adapter.issue_credential(user))
@@ -138,5 +140,7 @@ def register_oidc_routes(router: APIRouter, ctx: OIDCContext) -> None:
         )
 
         # Run the after-login hook (fire and forget)
-        bg_tasks.add_task(ctx.login_hooks["run_after_login"], user_info, request)  # type:ignore
+        bg_tasks.add_task(
+            ctx.oidc_login_hooks["run_after_oidc_login"], user_info, request
+        )
         return TokenResponse(access_token=access_token)

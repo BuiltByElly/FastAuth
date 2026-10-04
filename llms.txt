@@ -1,0 +1,56 @@
+# FastAuth — agent reference
+
+FastAPI-native async auth library. One class per strategy, one frozen `FastAuthConfig`, your own SQLAlchemy models. Python 3.14+.
+
+## Install
+
+```bash
+uv add fastauth        # ships SQLAlchemy + redis client, no extras
+uv add aiosqlite       # async DB driver (SQLite example)
+```
+
+## Minimal app
+
+```python
+auth = SessionAuth(
+    adapter=SQLAlchemySessionAdapter,
+    user_model=User,              # inherits FastAuthUserMixin
+    session_model=Session,        # inherits FastAuthSessionMixin + user_id FK
+    db_session_dependency=get_db, # yields AsyncSession, expire_on_commit=False
+)
+app.include_router(auth.router)   # prefix /auth
+
+@app.get("/protected")
+async def protected(user=Depends(auth.current_user)): ...
+```
+
+Full runnable version: `examples/basic/main.py`. Other examples: `jwt_example` (JWT + DB limiter), `oidc` (Google), `oauth2` (GitHub + `map_profile_to_user`).
+
+## Strategies
+
+| Class | Import | Needs | Prefix | Endpoints |
+|---|---|---|---|---|
+| `SessionAuth` | `fastauth` | `session_model` | `/auth` | signup, login, logout, forgot/reset-password, me |
+| `JWTAuth` | `fastauth` | `refresh_model`, `jwt=JWTConfig(...)` | `/auth` | above + refresh; `purge_expired_refresh_tokens(session)` |
+| `OIDCAuth` | `fastauth.core` | `oauth_account_model`, `strategy="session"\|"jwt"`, `oidc=OIDCConfig(...)` | `/auth/oidc` | `GET /{provider}/login`, `GET /{provider}/callback` |
+| `OAuth2Auth` | `fastauth.core` | same shape, `oauth2=OAuth2Config(...)` | `/auth/oauth2` | same shape |
+
+`strategy` is a constructor arg ONLY on `OIDCAuth`/`OAuth2Auth` (it picks session vs JWT credential backend). `SessionAuth`/`JWTAuth` fix it as a class attribute — never pass `strategy=` to them.
+
+## Config essentials (`FastAuthConfig`, all frozen)
+
+Secrets (32–512 chars, placeholders like `change-me` rejected — use `openssl rand -hex 32`); JWT access 1–30 min (default 10), refresh 1–30 days (default 7); sessions 1–30 days (default 7); cookies always `HttpOnly`, `secure=True` default. Rate limits default 100/60s with tighter per-route rules; backends `memory` (default) / `database` (model + adapter + session dep) / `redis` (adapter + client).
+
+## Hooks
+
+Before-hooks `(payload, request) -> payload`, block with `HookAbort(status, detail)`; crash → generic 500. Observers `(event, request) -> None`, run as background tasks post-response, crashes logged to `fastauth` logger and ignored. Passwords reach only before-hooks as `SecretStr`. Password flows: `on_before/after_signup`, `on_signup_failure`, `on_before_login`, `on_login_failure`, `on_after_login`, `on_after_logout(user_id)`, `on_password_reset_requested/reset_changed`, JWT `on_token_reuse_detected`. OAuth: `on_after_oidc_login(OAuthUserInfo)`, `on_after_oauth2_login(OAuth2LoginResult)` — provider tokens never persisted.
+
+## Fail-closed errors (don't retry, don't leak)
+
+Login failures are indistinguishable (same generic error); forgot-password returns 200 for unknown emails; OAuth email colliding with a password account → 400; inactive user → 403; orphaned OAuth row → 401; rate breach → 429; bad/expired/replayed OAuth `state` → 400.
+
+## Invariants (do not break)
+
+Adapters flush, routes commit (rate limiter commits inside `check()`). `expire_on_commit=False` on session factories. Models satisfy `protocols.py` attribute names (`ensure_model_compliance` enforces at startup). `trusted_ip_header` is opt-in only.
+
+Full signatures: `docs/reference/api.md`. Internals: `ARCHITECTURE.md`.

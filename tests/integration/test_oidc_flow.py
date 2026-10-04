@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from fastauth.schemas import OIDCUserInfo
+from fastauth.types import OAuthUserInfo
 from tests.conftest import (
     OIDCAccount,
     User,
@@ -32,9 +32,7 @@ def _callback(client, state, provider="google"):
     return client.get(f"/auth/oidc/{provider}/callback?code=code&state={state}")
 
 
-async def test_session_signin_creates_user_account_and_session(
-    client, session_factory
-):
+async def test_session_signin_creates_user_account_and_session(client, session_factory):
     response = _callback(client, oidc_begin(client))
     assert response.status_code == 200
     assert response.json() == {"success": True, "message": "Logged in successfully"}
@@ -93,12 +91,14 @@ async def test_jwt_strategy_issues_working_credentials(
             assert len(accounts) == 1
 
 
-def test_after_login_hook_receives_oidc_user_info(get_db, oidc_test_config, monkeypatch):
+def test_after_login_hook_receives_oidc_user_info(
+    get_db, oidc_test_config, monkeypatch
+):
     stub_oidc_provider(monkeypatch)
     app, auth = build_oidc_app(get_db, config=oidc_test_config)
     received = []
 
-    @auth.on_after_login
+    @auth.on_after_oidc_login
     async def capture(user, request):
         received.append(user)
 
@@ -107,7 +107,7 @@ def test_after_login_hook_receives_oidc_user_info(get_db, oidc_test_config, monk
 
     assert len(received) == 1
     info = received[0]
-    assert isinstance(info, OIDCUserInfo)
+    assert isinstance(info, OAuthUserInfo)
     assert info.provider == "google"
     assert info.provider_user_id == "sub-1"
     assert info.email == "u@example.com"

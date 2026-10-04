@@ -18,13 +18,15 @@ from fastauth.dependencies.current_user import jwt_current_user, session_current
 from fastauth.dependencies.rate_limiter import RateLimiter
 from fastauth.hooks.login import LoginHooks
 from fastauth.hooks.logout import LogoutHooks
+from fastauth.hooks.oauth import OAuth2LoginHooks, OIDCLoginHooks
 from fastauth.hooks.password import PasswordHooks
 from fastauth.hooks.refresh import RefreshHooks
 from fastauth.hooks.signup import SignupHooks
-from fastauth.oauth.oidc import OIDCProvider, OIDCStateManager
+from fastauth.oauth.oauth2 import OAuth2Provider
+from fastauth.oauth.oidc import OIDCProvider
 from fastauth.protocols import (
-    OIDCAccountProtocol,
-    OIDCAccountT,
+    OAuthAccountProtocol,
+    OAuthAccountT,
     PasswordResetTokenProtocol,
     PasswordResetTokenT,
     RefreshT,
@@ -35,8 +37,9 @@ from fastauth.protocols import (
     UserT,
     ensure_model_compliance,
 )
-from fastauth.routes.context import AuthContext, OIDCContext
+from fastauth.routes.context import AuthContext, OAuth2Context, OIDCContext
 from fastauth.routes.jwt_route import register_jwt_routes
+from fastauth.routes.oauth2_route import register_oauth2_routes
 from fastauth.routes.oidc_route import register_oidc_routes
 from fastauth.routes.session import register_session_routes
 from fastauth.schemas import (
@@ -45,7 +48,7 @@ from fastauth.schemas import (
     build_signup_schema,
     build_user_response_schema,
 )
-from fastauth.security import build_hasher
+from fastauth.security import OAuthStateManager, build_hasher
 
 from .config import FastAuthConfig, RateLimitConfig
 
@@ -314,7 +317,7 @@ class OIDCAuth(FastAuth):
         adapter: type[Adapter],
         db_session_dependency: Callable[[], AsyncGenerator[Any]],
         user_model: type[UserT],
-        oidc_account_model: type[OIDCAccountT],
+        oauth_account_model: type[OAuthAccountT],
         strategy: Literal["session", "jwt"],
         session_model: type[SessionT] | None = None,
         refresh_model: type[RefreshT] | None = None,
@@ -330,7 +333,7 @@ class OIDCAuth(FastAuth):
 
         ensure_model_compliance(user_model, UserProtocol, name="user_model")
         ensure_model_compliance(
-            oidc_account_model, OIDCAccountProtocol, name="oidc_account_model"
+            oauth_account_model, OAuthAccountProtocol, name="oauth_account_model"
         )
 
         if strategy == "session" and session_model is None:
@@ -360,7 +363,7 @@ class OIDCAuth(FastAuth):
             rate_limit_config=cfg.rate_limit
         )
 
-        self.state_manager = OIDCStateManager(secret_key=cfg.oidc.secret_key)
+        self.state_manager = OAuthStateManager(secret_key=cfg.oidc.secret_key)
         self.providers: dict[str, OIDCProvider] = {
             p.name: OIDCProvider(
                 name=p.name,
@@ -373,10 +376,9 @@ class OIDCAuth(FastAuth):
             for p in cfg.oidc.providers
         }
 
-        self.login_hooks = LoginHooks(
-            schema=None,
-        )
-        self.on_after_login = self.login_hooks.on_after_login
+        self.oidc_login_hooks = OIDCLoginHooks()
+
+        self.on_after_oidc_login = self.oidc_login_hooks.on_after_oidc_login
 
         self.ctx = OIDCContext(
             adapter_class=adapter,
@@ -388,9 +390,11 @@ class OIDCAuth(FastAuth):
             config=cfg,
             state_manager=self.state_manager,
             providers=self.providers,
-            oidc_account_model=oidc_account_model,
+            oauth_account_model=oauth_account_model,
             rate_limiter=self.rate_limiter,
-            login_hooks={"run_after_login": self.login_hooks.run_after_login},
+            oidc_login_hooks={
+                "run_after_oidc_login": self.oidc_login_hooks.run_after_oidc_login
+            },
         )
 
         self.current_user = (
@@ -399,6 +403,110 @@ class OIDCAuth(FastAuth):
             else session_current_user(self.ctx)
         )
 
-        tags = tags or [p.name for p in cfg.oidc.providers]
+        tags = tags or [p.name.capitalize() for p in cfg.oidc.providers]
         self.router = APIRouter(prefix=prefix, tags=tags)
         register_oidc_routes(self.router, self.ctx)
+
+
+class OAuth2Auth(FastAuth):
+    """Plain OAuth2 login (GitHub, Twitter, etc.) — issues credentials
+    via its own adapter, same call shape as SessionAuth/JWTAuth/OIDCAuth.
+
+    Deliberately skips FastAuth.__init__ — same reasoning as OIDCAuth:
+    none of the password/signup machinery applies here either.
+    """
+
+    strategy: Literal["session", "jwt"]
+
+    def __init__(
+        self,
+        adapter: type[Adapter],
+        db_session_dependency: Callable[[], AsyncGenerator[Any]],
+        user_model: type[UserT],
+        oauth_account_model: type[OAuthAccountT],
+        strategy: Literal["session", "jwt"],
+        session_model: type[SessionT] | None = None,
+        refresh_model: type[RefreshT] | None = None,
+        rate_limiter: RateLimiter | None = None,
+        tags: list[str | Enum] | None = None,
+        prefix: str = "/auth/oauth2",
+        config: FastAuthConfig | None = None,
+    ):
+        cfg = config or FastAuthConfig()
+        if cfg.oauth2 is None:
+            msg = "OAuth2Auth requires config.oauth2 (pass FastAuthConfig with oauth2=OAuth2Config(...))."
+            raise ValueError(msg)
+
+        ensure_model_compliance(user_model, UserProtocol, name="user_model")
+        ensure_model_compliance(
+            oauth_account_model, OAuthAccountProtocol, name="oauth_account_model"
+        )
+
+        if strategy == "session" and session_model is None:
+            msg = "OAuth2Auth strategy='session' requires session_model."
+            raise ValueError(msg)
+        if strategy == "jwt" and refresh_model is None:
+            msg = "OAuth2Auth strategy='jwt' requires refresh_model."
+            raise ValueError(msg)
+
+        if strategy == "session" and session_model is not None:
+            ensure_model_compliance(
+                session_model, SessionProtocol, name="session_model"
+            )
+        if strategy == "jwt" and refresh_model is not None:
+            ensure_model_compliance(
+                refresh_model, RefreshTokenProtocol, name="refresh_model"
+            )
+
+        self.config = cfg
+        self.strategy = strategy
+
+        self.rate_limiter = rate_limiter or RateLimiter(
+            rate_limit_config=cfg.rate_limit
+        )
+
+        self.state_manager = OAuthStateManager(secret_key=cfg.oauth2.secret_key)
+        self.providers: dict[str, OAuth2Provider] = {
+            p.name: OAuth2Provider(
+                name=p.name,
+                client_id=p.client_id,
+                client_secret=p.client_secret,
+                authorization_url=str(p.authorization_url),
+                token_url=str(p.token_url),
+                userinfo_url=str(p.userinfo_url),
+                map_profile_to_user=p.map_profile_to_user,
+                scope=" ".join(p.scopes),
+                extra_authorize_params=p.extra_authorize_params,
+            )
+            for p in cfg.oauth2.providers
+        }
+
+        self.oauth2_login_hooks = OAuth2LoginHooks()
+        self.on_after_oauth2_login = self.oauth2_login_hooks.on_after_oauth2_login
+
+        self.ctx = OAuth2Context(
+            adapter_class=adapter,
+            user_model=user_model,
+            oauth_account_model=oauth_account_model,
+            session_model=session_model,
+            refresh_model=refresh_model,
+            db_session_dependency=db_session_dependency,
+            strategy=strategy,
+            config=cfg,
+            state_manager=self.state_manager,
+            providers=self.providers,
+            rate_limiter=self.rate_limiter,
+            oauth2_login_hooks={
+                "run_after_oauth2_login": self.oauth2_login_hooks.run_after_oauth2_login
+            },
+        )
+        self.current_user = (
+            jwt_current_user(self.ctx)
+            if self.strategy == "jwt"
+            else session_current_user(self.ctx)
+        )
+
+        tags = tags or [p.name.capitalize() for p in cfg.oauth2.providers]
+
+        self.router = APIRouter(prefix=prefix, tags=tags)
+        register_oauth2_routes(self.router, self.ctx)

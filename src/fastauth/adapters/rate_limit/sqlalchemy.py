@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastauth.adapters.adapters import RateLimiterAdapter
@@ -10,10 +12,8 @@ class SQLAlchemyRateLimiter(RateLimiterAdapter[RateLimitT]):
     """DB-backed fixed-window counter. Works across multiple processes/instances."""
 
     def __init__(self, db_session: AsyncSession, model: type[RateLimitT]):
-        super().__init__(
-            db_session,
-            model,
-        )
+        self.db_session = db_session
+        self.model = model
 
     async def check(self, key: str, window: int, max_requests: int) -> bool:
         """Check if the given key has exceeded the rate limit within the given window.
@@ -28,30 +28,33 @@ class SQLAlchemyRateLimiter(RateLimiterAdapter[RateLimitT]):
         Returns:
             True if the key has not exceeded the rate limit, False otherwise
         """
+
         now = datetime.now(UTC)
-        row = await self.db_session.get(self.model, key)
+
+        stmt = select(self.model).where(self.model.key == key).with_for_update()  # type: ignore[call-arg]
+        result = await self.db_session.execute(stmt)
+        row = result.scalar_one_or_none()
 
         if row is None:
-            # first request ever for this key
             row = self.model(key=key, count=1, window_start=now)  # type: ignore[call-arg]
             self.db_session.add(row)
             await self.db_session.commit()
             return True
 
-        window_start = row.window_start
+        window_start = row.window_start  # type: ignore[union-attr]
         if window_start.tzinfo is None:
             window_start = window_start.replace(tzinfo=UTC)
 
         if now - window_start > timedelta(seconds=window):
-            # window expired, reset
-            row.count = 1
-            row.window_start = now
+            row.count = 1  # type: ignore[union-attr]
+            row.window_start = now  # type: ignore[union-attr]
             await self.db_session.commit()
             return True
 
-        if row.count >= max_requests:
-            return False  # over limit, don't increment further
+        if row.count >= max_requests:  # type: ignore[union-attr]
+            await self.db_session.commit()  # release the lock even on the blocked path
+            return False
 
-        row.count += 1
+        row.count += 1  # type: ignore[union-attr]
         await self.db_session.commit()
         return True

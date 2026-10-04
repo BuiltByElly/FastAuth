@@ -16,8 +16,8 @@ from pydantic import ValidationError
 from fastauth.adapters.sqlalchemy import SQLAlchemyJWTAdapter, SQLAlchemySessionAdapter
 from fastauth.config import FastAuthConfig, OIDCConfig
 from fastauth.core import OIDCAuth
-from fastauth.oauth.oidc import OIDCProvider, OIDCStateManager
-from fastauth.security import build_hasher
+from fastauth.oauth.oidc import OIDCProvider
+from fastauth.security import OAuthStateManager, build_hasher
 from tests.conftest import OIDCAccount, Session, User
 
 OIDC_SECRET = "o" * 40
@@ -29,13 +29,13 @@ REDIRECT_URI = "http://testserver/auth/oidc/google/callback"
 
 
 def test_generated_state_roundtrips():
-    manager = OIDCStateManager(OIDC_SECRET)
+    manager = OAuthStateManager(OIDC_SECRET)
     raw, signed = manager.generate("google")
     assert manager.verify(signed, raw, "google") is True
 
 
 def test_states_are_fresh_and_unguessable():
-    manager = OIDCStateManager(OIDC_SECRET)
+    manager = OAuthStateManager(OIDC_SECRET)
     first = manager.generate("google")[0]
     second = manager.generate("google")[0]
     assert first != second
@@ -43,7 +43,7 @@ def test_states_are_fresh_and_unguessable():
 
 
 def test_verify_rejects_missing_inputs():
-    manager = OIDCStateManager(OIDC_SECRET)
+    manager = OAuthStateManager(OIDC_SECRET)
     raw, signed = manager.generate("google")
     assert manager.verify(None, raw, "google") is False
     assert manager.verify(signed, None, "google") is False
@@ -51,18 +51,18 @@ def test_verify_rejects_missing_inputs():
 
 
 def test_verify_rejects_wrong_provider():
-    manager = OIDCStateManager(OIDC_SECRET)
+    manager = OAuthStateManager(OIDC_SECRET)
     raw, signed = manager.generate("google")
     assert manager.verify(signed, raw, "microsoft") is False
 
 
 def test_verify_rejects_state_from_another_secret():
-    raw, signed = OIDCStateManager("p" * 40).generate("google")
-    assert OIDCStateManager(OIDC_SECRET).verify(signed, raw, "google") is False
+    raw, signed = OAuthStateManager("p" * 40).generate("google")
+    assert OAuthStateManager(OIDC_SECRET).verify(signed, raw, "google") is False
 
 
 def test_verify_rejects_tampered_cookie():
-    manager = OIDCStateManager(OIDC_SECRET)
+    manager = OAuthStateManager(OIDC_SECRET)
     raw, signed = manager.generate("google")
     payload, *rest = signed.split(".")
     tampered = ("B" if payload[0] != "B" else "C") + payload[1:]
@@ -70,13 +70,13 @@ def test_verify_rejects_tampered_cookie():
 
 
 def test_verify_rejects_mismatched_state_value():
-    manager = OIDCStateManager(OIDC_SECRET)
+    manager = OAuthStateManager(OIDC_SECRET)
     _, signed = manager.generate("google")
     assert manager.verify(signed, "attacker-guess", "google") is False
 
 
 def test_verify_rejects_expired_state():
-    manager = OIDCStateManager(OIDC_SECRET, max_age=-1)
+    manager = OAuthStateManager(OIDC_SECRET, max_age=-1)
     raw, signed = manager.generate("google")
     assert manager.verify(signed, raw, "google") is False
 
@@ -103,7 +103,7 @@ def test_oidc_auth_requires_oidc_section(get_db):
         OIDCAuth(
             adapter=SQLAlchemySessionAdapter,
             user_model=User,
-            oidc_account_model=OIDCAccount,
+            oauth_account_model=OIDCAccount,
             strategy="session",
             session_model=Session,
             db_session_dependency=get_db,
@@ -116,7 +116,7 @@ def test_session_strategy_requires_session_model(get_db, oidc_config):
         OIDCAuth(
             adapter=SQLAlchemySessionAdapter,
             user_model=User,
-            oidc_account_model=OIDCAccount,
+            oauth_account_model=OIDCAccount,
             strategy="session",
             db_session_dependency=get_db,
             config=FastAuthConfig(oidc=oidc_config),
@@ -128,7 +128,7 @@ def test_jwt_strategy_requires_refresh_model(get_db, oidc_config):
         OIDCAuth(
             adapter=SQLAlchemyJWTAdapter,
             user_model=User,
-            oidc_account_model=OIDCAccount,
+            oauth_account_model=OIDCAccount,
             strategy="jwt",
             db_session_dependency=get_db,
             config=FastAuthConfig(oidc=oidc_config),
@@ -145,7 +145,7 @@ def test_noncompliant_models_fail_fast(get_db, oidc_config):
         OIDCAuth(
             adapter=SQLAlchemySessionAdapter,
             user_model=NotAUser,
-            oidc_account_model=OIDCAccount,
+            oauth_account_model=OIDCAccount,
             strategy="session",
             session_model=Session,
             db_session_dependency=get_db,
@@ -296,12 +296,12 @@ def test_normalize_defaults_email_verified_to_false(provider):
 # --- adapter guard -----------------------------------------------------------
 
 
-async def test_oidc_account_model_is_required(session_factory):
+async def test_oauth_account_model_is_required(session_factory):
     async with session_factory() as session:
         adapter = SQLAlchemySessionAdapter(
             session, User, Session, password_hasher=build_hasher(None)
         )
-        with pytest.raises(ValueError, match="oidc_account_model"):
-            adapter.require_oidc_account_model()
-        with pytest.raises(ValueError, match="oidc_account_model"):
+        with pytest.raises(ValueError, match="oauth_account_model"):
+            adapter.require_oauth_account_model()
+        with pytest.raises(ValueError, match="oauth_account_model"):
             await adapter.get_oidc_account("google", "sub-1")

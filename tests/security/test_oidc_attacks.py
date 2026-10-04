@@ -15,8 +15,7 @@ from fastauth.config import (
     OIDCProviderConfig,
     RateLimitConfig,
 )
-from fastauth.oauth.oidc import OIDCStateManager
-from fastauth.security import verify_password
+from fastauth.security import OAuthStateManager, verify_password
 from tests.conftest import (
     OIDCAccount,
     User,
@@ -136,7 +135,7 @@ def test_expired_state_is_rejected(get_db, oidc_test_config, monkeypatch):
     stub_oidc_provider(monkeypatch)
     app, auth = build_oidc_app(get_db, config=oidc_test_config)
     # Same signing secret, zero tolerance for age.
-    auth.ctx.state_manager = OIDCStateManager(secret_key="o" * 40, max_age=-1)
+    auth.ctx.state_manager = OAuthStateManager(secret_key="o" * 40, max_age=-1)
     with TestClient(app, follow_redirects=False) as client:
         state = oidc_begin(client)
         _assert_rejected(_callback(client, state))
@@ -169,9 +168,7 @@ def test_state_is_bound_to_its_provider(get_db, oidc_test_config, monkeypatch):
 
 def test_unknown_provider_is_404(client):
     assert client.get("/auth/oidc/nope/login").status_code == 404
-    assert (
-        client.get("/auth/oidc/nope/callback?code=x&state=y").status_code == 404
-    )
+    assert client.get("/auth/oidc/nope/callback?code=x&state=y").status_code == 404
 
 
 # --- account abuse ------------------------------------------------------------

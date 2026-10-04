@@ -8,6 +8,7 @@ from fastauth.config import (
     FastAuthConfig,
     JWTConfig,
     PasswordConfig,
+    RateLimitConfig,
     SessionConfig,
 )
 
@@ -27,6 +28,10 @@ def test_defaults_are_secure_and_working():
     assert cfg.jwt is None
     assert cfg.rate_limit.enabled is True
     assert cfg.rate_limit.storage == "memory"
+
+
+def test_rate_limit_accepts_redis_storage():
+    assert RateLimitConfig(storage="redis").storage == "redis"
 
 
 def test_config_is_frozen():

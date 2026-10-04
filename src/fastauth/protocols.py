@@ -74,8 +74,8 @@ class PasswordResetTokenProtocol(Protocol):
 
 
 @runtime_checkable
-class OIDCAccountProtocol(Protocol):
-    """Anything FastAuth can use as an OIDC account row."""
+class OAuthAccountProtocol(Protocol):
+    """Anything FastAuth can use as an OAuth account row."""
 
     id: uuid.UUID
     user_id: uuid.UUID
@@ -94,7 +94,7 @@ SessionT = TypeVar("SessionT")
 RefreshT = TypeVar("RefreshT")
 RateLimitT = TypeVar("RateLimitT")
 PasswordResetTokenT = TypeVar("PasswordResetTokenT")
-OIDCAccountT = TypeVar("OIDCAccountT")
+OAuthAccountT = TypeVar("OAuthAccountT")
 
 
 def _required_attributes(protocol: type) -> tuple[str, ...]:
