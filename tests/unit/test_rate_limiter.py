@@ -106,7 +106,7 @@ def test_database_storage_requires_model_and_adapter():
     with pytest.raises(ValueError, match="rate_limiter_adapter"):
         RateLimiter(
             rate_limit_model=object,
-            db_session_dependency=None,
+            db_session_dependency=lambda: None,
             rate_limit_config=cfg,
         )
 
