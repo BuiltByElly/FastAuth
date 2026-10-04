@@ -41,10 +41,6 @@ dev = [
     "zensical>=0.0.67",
 ]
 
-[[tool.uv.index]]
-name = "testpypi"
-url = "https://test.pypi.org/simple/"
-publish-url = "https://test.pypi.org/legacy/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
